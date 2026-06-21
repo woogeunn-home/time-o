@@ -11,7 +11,8 @@ struct TimeOApp: App {
         MenuBarExtra("TimeO", systemImage: "hourglass") {
             TimerMenuBarWindow(
                 model: appState.model,
-                selectedMinutes: $selectedMinutes
+                selectedMinutes: $selectedMinutes,
+                onTogglePathDemo: { appState.toggleTimesUp() }
             )
         }
         .menuBarExtraStyle(.window)
@@ -53,6 +54,7 @@ final class TimerModel: ObservableObject {
     @Published var displayStyle: TimerDisplayStyle = .normal
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
+    @Published var isFinished = false
 
     private var endDate: Date?
     private var timer: Timer?
@@ -79,6 +81,7 @@ final class TimerModel: ObservableObject {
         endDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
         isRunning = true
         isPaused = false
+        isFinished = false
         scheduleTimer()
     }
 
@@ -125,6 +128,20 @@ final class TimerModel: ObservableObject {
         isRunning = false
         isPaused = false
         isOverlayHovered = false
+        isFinished = false
+    }
+
+    /// Timer reached zero: keep the overlay on screen showing "Time Out!" until
+    /// the user dismisses it, instead of clearing it like `stop()`.
+    private func finish() {
+        timer?.invalidate()
+        timer = nil
+        endDate = nil
+        remainingSeconds = 0
+        isRunning = false
+        isPaused = false
+        isOverlayHovered = false
+        isFinished = true
     }
 
     private func scheduleTimer() {
@@ -150,7 +167,7 @@ final class TimerModel: ObservableObject {
             remainingSeconds = nextRemainingSeconds
         }
         if remainingSeconds == 0 {
-            stop()
+            finish()
         }
     }
 }
@@ -160,6 +177,11 @@ final class TimeOAppState: ObservableObject {
 
     private var overlayController: OverlayController?
     private var screenObserver: NSObjectProtocol?
+
+    /// Debug: flip the "Time's Up" state on/off without waiting for a timer.
+    func toggleTimesUp() {
+        model.isFinished.toggle()
+    }
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -197,6 +219,7 @@ final class TimeOAppState: ObservableObject {
 struct TimerMenuBarWindow: View {
     @ObservedObject var model: TimerModel
     @Binding var selectedMinutes: Int
+    var onTogglePathDemo: () -> Void = {}
 
     private let presets = [
         ("30M", 30),
@@ -290,6 +313,16 @@ struct TimerMenuBarWindow: View {
                 .disabled(!model.isRunning)
             }
             .buttonStyle(.borderedProminent)
+
+            Divider()
+
+            Button {
+                onTogglePathDemo()
+            } label: {
+                Label("Test Time's Up", systemImage: "textformat.alt")
+                    .frame(maxWidth: .infinity)
+            }
+            .controlSize(.small)
         }
         .padding(18)
         .frame(width: 330)
@@ -301,6 +334,9 @@ struct TimerMenuBarWindow: View {
         }
         if model.isRunning {
             return model.formattedRemaining
+        }
+        if model.isFinished {
+            return "Time's Up"
         }
         return "Set a timer overlay"
     }
@@ -325,6 +361,7 @@ final class OverlayController {
     private var windows: [OverlayWindow] = []
     private var cancellables: Set<AnyCancellable> = []
     private var hoverTimer: Timer?
+    private let traveling = TravelingTimeOutController()
 
     init(model: TimerModel) {
         self.model = model
@@ -345,6 +382,18 @@ final class OverlayController {
             }
             .store(in: &cancellables)
 
+        // On finish, carry the "Time's Up" capsule around the screen edge.
+        model.$isFinished
+            .receive(on: RunLoop.main)
+            .sink { [weak self] finished in
+                guard let self else { return }
+                if finished, let screen = NSScreen.main ?? NSScreen.screens.first {
+                    self.traveling.play(on: screen, model: self.model)
+                } else if !finished {
+                    self.traveling.stop()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func rebuildWindows() {
@@ -465,8 +514,8 @@ final class OverlayWindow: NSPanel {
         displayStyle: TimerDisplayStyle
     ) -> NSRect {
         let visibleFrame = screen.visibleFrame
-        let targetWidth: CGFloat = displayStyle == .flapClock ? 300 : 240
-        let targetHeight: CGFloat = displayStyle == .flapClock ? 84 : 76
+        let targetWidth: CGFloat = 240
+        let targetHeight: CGFloat = 76
         let width: CGFloat = min(targetWidth, visibleFrame.width - 48)
         let height: CGFloat = targetHeight
         let inset: CGFloat = 4
@@ -521,7 +570,7 @@ struct TimerOverlayView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: contentAlignment)
         .animation(.easeOut(duration: 0.24), value: model.isRunning)
         .onChange(of: model.isOverlayHovered) { isHovered in
             updateHiddenOffset(isHovered: isHovered)
@@ -533,6 +582,19 @@ struct TimerOverlayView: View {
             updateHiddenOffset(isHovered: model.isOverlayHovered, animated: false)
         }
         .allowsHitTesting(model.isRunning)
+    }
+
+    /// Hug the overlay content to the active corner so the gap to the touching
+    /// screen edges matches the window inset on every side.
+    private var contentAlignment: Alignment {
+        switch model.overlayPosition {
+        case .topLeading: return .topLeading
+        case .topCenter: return .top
+        case .topTrailing: return .topTrailing
+        case .bottomLeading: return .bottomLeading
+        case .bottomCenter: return .bottom
+        case .bottomTrailing: return .bottomTrailing
+        }
     }
 
     private func updateHiddenOffset(isHovered: Bool, animated: Bool = true) {
@@ -581,7 +643,10 @@ struct FlipFlapTimerText: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .background {
-            FlapClockBackground(isDark: resolvedIsDark)
+            FlapClockBackground(
+                isDark: resolvedIsDark,
+                shape: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
         }
         .flipsForRightToLeftLayoutDirection(false)
         .environment(\.layoutDirection, .leftToRight)
@@ -593,10 +658,10 @@ struct FlipFlapSeparator: View {
 
     var body: some View {
         Text(":")
-            .font(.system(size: 24, weight: .bold, design: .rounded))
+            .font(.system(size: 28, weight: .bold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(isDark ? Color(red: 0.72, green: 0.73, blue: 0.76) : Color(red: 0.18, green: 0.18, blue: 0.2))
-            .frame(width: 8, height: 44)
+            .frame(width: 10, height: 52)
     }
 }
 
@@ -616,9 +681,16 @@ struct FlipFlapCharacterCell: View {
     @State private var bottomShadow: Double = 1
     @State private var animationID = UUID()
 
-    private let width: CGFloat = 28
-    private let height: CGFloat = 44
+    private let width: CGFloat = 33
+    private let height: CGFloat = 52
     private let halfFlipDuration = 0.14
+
+    /// The shadow the moving leaf casts onto the static half it covers. Kept
+    /// gentle in light mode so the still-readable old digit doesn't appear to
+    /// abruptly change color.
+    private var castShadowScale: Double {
+        isDark ? 1.0 : 0.4
+    }
 
     init(character: Character, isDark: Bool) {
         self.character = character
@@ -644,7 +716,7 @@ struct FlipFlapCharacterCell: View {
                     isDark: isDark,
                     width: width,
                     height: height,
-                    intensity: topShadow,
+                    intensity: topShadow * castShadowScale,
                     direction: .show
                 )
                 .offset(y: height / 4)
@@ -657,7 +729,7 @@ struct FlipFlapCharacterCell: View {
                     isDark: isDark,
                     width: width,
                     height: height,
-                    intensity: bottomShadow,
+                    intensity: bottomShadow * castShadowScale,
                     direction: .hide
                 )
                 .offset(y: -height / 4)
@@ -901,7 +973,7 @@ struct FlipFlapHalfTile: View {
                 }
 
             Text(String(character))
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .font(.system(size: 35, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(isDark ? Color(red: 0.8, green: 0.81, blue: 0.84) : Color(red: 0.12, green: 0.12, blue: 0.14))
                 .frame(width: width, height: height)
@@ -990,9 +1062,9 @@ struct FlipFlapFoldShadowOverlay: View {
     }
 
     private var shadowColors: [Color] {
-        let strong = isDark ? 0.98 : 0.72
-        let mid = isDark ? 0.56 : 0.36
-        let weak = isDark ? 0.16 : 0.08
+        let strong = isDark ? 0.98 : 0.26
+        let mid = isDark ? 0.56 : 0.12
+        let weak = isDark ? 0.16 : 0.03
 
         switch direction {
         case .none:
@@ -1013,31 +1085,32 @@ struct FlipFlapFoldShadowOverlay: View {
     }
 }
 
-/// Shared rounded-rect HUD background used by both the Normal and Flap Clock styles.
-struct FlapClockBackground: View {
+/// Shared HUD background used by both the Normal and Flap Clock styles.
+/// The clip/stroke shape is supplied by the caller (capsule for Normal,
+/// rounded rectangle for Flap Clock).
+struct FlapClockBackground<ContainerShape: InsettableShape>: View {
     let isDark: Bool
-
-    private let cornerRadius: CGFloat = 10
+    let shape: ContainerShape
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
             .fill(.clear)
             .background {
                 VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .clipShape(shape)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                shape
                     .fill(
                         LinearGradient(
                             colors: isDark
                                 ? [
-                                    Color.black.opacity(0.00),
-                                    Color.black.opacity(0.10)
+                                    Color.black.opacity(0.20),
+                                    Color.black.opacity(0.26)
                                 ]
                                 : [
-                                    Color.white.opacity(0.10),
-                                    Color.white.opacity(0.00)
+                                    Color.white.opacity(0.46),
+                                    Color.white.opacity(0.40)
                                 ],
                             startPoint: .top,
                             endPoint: .bottom
@@ -1045,7 +1118,7 @@ struct FlapClockBackground: View {
                     )
             }
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                shape
                     .strokeBorder(
                         LinearGradient(
                             colors: [
@@ -1069,8 +1142,10 @@ struct NormalTimerText: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    /// #ddd
-    private let textColor = Color(white: 0.867)
+    /// #ddd in dark, #222 in light.
+    private var textColor: Color {
+        resolvedIsDark ? Color(white: 0.867) : Color(white: 0.133)
+    }
 
     private var resolvedIsDark: Bool {
         switch appearanceMode {
@@ -1106,7 +1181,7 @@ struct NormalTimerText: View {
             .padding(.vertical, 10)
             .frame(minWidth: 196)
         } background: { _ in
-            FlapClockBackground(isDark: resolvedIsDark)
+            FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
         }
         .frame(height: 68)
         .flipsForRightToLeftLayoutDirection(false)
