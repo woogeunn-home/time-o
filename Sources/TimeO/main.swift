@@ -1104,9 +1104,11 @@ struct NormalTimerText: View {
             .padding(.leading, 14)
             .padding(.trailing, 20)
             .padding(.vertical, 10)
+            .frame(minWidth: 196)
         } background: { _ in
             FlapClockBackground(isDark: resolvedIsDark)
         }
+        .frame(height: 68)
         .flipsForRightToLeftLayoutDirection(false)
         .environment(\.layoutDirection, .leftToRight)
     }
