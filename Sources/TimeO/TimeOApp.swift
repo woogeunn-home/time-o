@@ -348,7 +348,7 @@ struct TimerMenuBarWindow: View {
 
             VStack(spacing: 6) {
                 Text(model.formattedRemaining)
-                    .font(.system(size: 32, weight: .semibold, design: .default))
+                    .font(.system(size: 18, weight: .semibold, design: .default))
                     .monospacedDigit()
                     .foregroundStyle(.white)
 
