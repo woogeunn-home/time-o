@@ -233,7 +233,7 @@ struct TimerMenuBarWindow: View {
     @FocusState private var isCustomMinutesFocused: Bool
 
     private let contentWidth: CGFloat = 320
-    private let contentHeight: CGFloat = 336
+    private let contentHeight: CGFloat = 278
     private let contentPadding: CGFloat = 12
 
     private let presets = [
@@ -359,19 +359,19 @@ struct TimerMenuBarWindow: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
 
-            VStack(spacing: 28) {
+            VStack(spacing: 16) {
                 positionButtonRow([.topLeading, .topCenter, .topTrailing])
                 positionButtonRow([.middleLeading, nil, .middleTrailing], centerContent: {
                     Text("Position")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.secondary)
                 })
                 positionButtonRow([.bottomLeading, .bottomCenter, .bottomTrailing])
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 26)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
         }
-        .frame(width: contentWidth, height: 210)
+        .frame(width: contentWidth, height: 140)
     }
 
     private func positionButtonRow(
@@ -403,13 +403,13 @@ struct TimerMenuBarWindow: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(positionNodeStroke(for: position), lineWidth: position == model.overlayPosition ? 2 : 1)
                     }
-                    .frame(width: 38, height: 38)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
             .help(position.rawValue)
         } else {
             Color.clear
-                .frame(width: 38, height: 38)
+                .frame(width: 22, height: 22)
         }
     }
 
