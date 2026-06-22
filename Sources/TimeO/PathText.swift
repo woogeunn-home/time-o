@@ -4,13 +4,15 @@ import SwiftUI
 
 // MARK: - Controller
 
-/// Full-screen overlay that keeps the first "Time's Up" capsule anchored at the
-/// chosen timer position, then adds another label to the right every second
-/// until the text trail wraps around the screen.
+/// Full-screen overlay that anchors the first message block at the top-center of
+/// the screen, then adds another phrase block every interval — cycling through a
+/// set of phrases — until the trail wraps once around the screen edge.
 final class TravelingTimeOutController {
     private var window: NSPanel?
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
+    private var localMoveMonitor: Any?
+    private var globalMoveMonitor: Any?
     private var startTime: CFTimeInterval = 0
     private weak var activeModel: TimerModel?
     private var activeScreen: NSScreen?
@@ -35,10 +37,12 @@ final class TravelingTimeOutController {
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
 
+        startTime = CACurrentMediaTime()
         let view = NSHostingView(rootView: TravelingTimeOutView(
             model: model,
             screenFrame: screen.frame,
-            visibleFrame: screen.visibleFrame
+            visibleFrame: screen.visibleFrame,
+            startTime: startTime
         ))
         view.frame = NSRect(origin: .zero, size: frame.size)
         view.autoresizingMask = [.width, .height]
@@ -49,7 +53,6 @@ final class TravelingTimeOutController {
         window = panel
         activeModel = model
         activeScreen = screen
-        startTime = CACurrentMediaTime()
         startClickMonitoring()
     }
 
@@ -65,82 +68,168 @@ final class TravelingTimeOutController {
         stopClickMonitoring()
 
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self, self.shouldDismiss() else {
+            guard let self, self.isOverCapsule() else {
                 return event
             }
-            self.activeModel?.stop()
+            self.beginClose()
             return nil
         }
 
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self, self.shouldDismiss() else { return }
+            guard let self, self.isOverCapsule() else { return }
             DispatchQueue.main.async {
-                self.activeModel?.stop()
+                self.beginClose()
             }
         }
+
+        // Pause the flow while the cursor hovers a capsule; resume when it leaves.
+        localMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            self?.updateHoverPause()
+            return event
+        }
+        globalMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            self?.updateHoverPause()
+        }
+    }
+
+    /// Kick off the sequential close animation; the view tears the overlay down
+    /// once every capsule has been retracted.
+    private func beginClose() {
+        guard let model = activeModel, !model.isClosing else { return }
+        model.isClosing = true
     }
 
     private func stopClickMonitoring() {
-        if let localClickMonitor {
-            NSEvent.removeMonitor(localClickMonitor)
-            self.localClickMonitor = nil
+        for monitor in [localClickMonitor, globalClickMonitor, localMoveMonitor, globalMoveMonitor] {
+            if let monitor { NSEvent.removeMonitor(monitor) }
         }
-        if let globalClickMonitor {
-            NSEvent.removeMonitor(globalClickMonitor)
-            self.globalClickMonitor = nil
-        }
+        localClickMonitor = nil
+        globalClickMonitor = nil
+        localMoveMonitor = nil
+        globalMoveMonitor = nil
     }
 
-    private func shouldDismiss() -> Bool {
-        guard let activeScreen else { return false }
-
+    /// Cursor position in the overlay's coordinate space, plus the layout area,
+    /// or nil when the cursor is off the active screen.
+    private func overlayPoint() -> (point: CGPoint, area: CGRect)? {
+        guard let activeScreen else { return nil }
         let screenPoint = NSEvent.mouseLocation
-        guard activeScreen.frame.contains(screenPoint) else { return false }
-
+        guard activeScreen.frame.contains(screenPoint) else { return nil }
         let point = CGPoint(
             x: screenPoint.x - activeScreen.frame.minX,
             y: activeScreen.frame.maxY - screenPoint.y
         )
-        let elapsed = CGFloat(CACurrentMediaTime() - startTime)
+        let area = TravelingTimeOutGeometry.layoutArea(
+            screenFrame: activeScreen.frame,
+            visibleFrame: activeScreen.visibleFrame
+        )
+        return (point, area)
+    }
+
+    private func currentFlowOffset(area: CGRect, now: CFTimeInterval) -> CGFloat {
+        guard let model = activeModel else { return 0 }
+        let capacity = TravelingTimeOutGeometry.capacity(in: area, timeString: TravelingTimeOutGeometry.currentTimeString())
+        let revealDuration = TravelingTimeOutGeometry.revealDuration(capacity: capacity)
+        let flowSeconds = model.flowSeconds(now: now, startTime: startTime, revealDuration: revealDuration)
+        return TravelingTimeOutGeometry.flowOffset(flowSeconds: flowSeconds)
+    }
+
+    private func isOverCapsule() -> Bool {
+        guard let (point, area) = overlayPoint() else { return false }
+        let now = CACurrentMediaTime()
+        let elapsed = now - startTime
         return TravelingTimeOutGeometry.contains(
             point,
-            in: TravelingTimeOutGeometry.layoutArea(
-                screenFrame: activeScreen.frame,
-                visibleFrame: activeScreen.visibleFrame
-            ),
-            position: activeModel?.overlayPosition ?? .topCenter,
-            itemCount: TravelingTimeOutGeometry.itemCount(after: elapsed)
+            in: area,
+            itemCount: TravelingTimeOutGeometry.itemCount(after: CGFloat(elapsed)),
+            flowOffset: currentFlowOffset(area: area, now: now)
         )
+    }
+
+    private func updateHoverPause() {
+        guard let model = activeModel else { return }
+        let now = CACurrentMediaTime()
+        if isOverCapsule() {
+            if model.flowPauseStartedAt == nil { model.flowPauseStartedAt = now }
+        } else if let started = model.flowPauseStartedAt {
+            model.flowPausedTotal += now - started
+            model.flowPauseStartedAt = nil
+        }
     }
 }
 
 private enum TravelingTimeOutGeometry {
     static let inset: CGFloat = 34
-    static let cornerRadius: CGFloat = 80
+    static let cornerRadius: CGFloat = 120
     static let bandWidth: CGFloat = 60
     static let fontSize: CGFloat = 30
-    static let message = "Time's Up"
-    static let repeatInterval: TimeInterval = 0.2
+    static let symbolSize: CGFloat = 32
+    static let sidePadding: CGFloat = 28
+    static let blockGap: CGFloat = 9
+    static let ringSpacing: CGFloat = bandWidth + 16
+    static let repeatInterval: TimeInterval = 0.5
+    /// Arc-length the whole trail drifts clockwise per second.
+    static let flowSpeed: CGFloat = 90
 
-    static func itemCount(after elapsed: CGFloat) -> Int {
-        max(1, Int(floor(TimeInterval(elapsed) / repeatInterval)) + 1)
+    /// Time the reveal takes to generate every capsule, after which flow begins.
+    static func revealDuration(capacity: Int) -> TimeInterval {
+        TimeInterval(max(0, capacity - 2)) * repeatInterval
     }
 
-    static func contains(_ point: CGPoint, in area: CGRect, position: OverlayPosition, itemCount: Int) -> Bool {
-        let path = perimeterPath(in: area)
-        let start = startDistance(for: position, on: path)
-        let length = filledLength(for: itemCount, on: path)
-        let steps = max(2, Int(length / 6))
-        let hitRadius = bandWidth / 2
+    /// Clockwise drift applied to every capsule, from the effective flowing time
+    /// (reveal and hover-pauses already excluded).
+    static func flowOffset(flowSeconds: TimeInterval) -> CGFloat {
+        CGFloat(max(0, flowSeconds)) * flowSpeed
+    }
 
-        for index in 0...steps {
-            let s = start + length * CGFloat(index) / CGFloat(steps)
-            let pathPoint = path.locate(s).0
-            if hypot(pathPoint.x - point.x, pathPoint.y - point.y) <= hitRadius {
-                return true
-            }
-        }
-        return false
+    /// Number of capsules that fit in a single loop (independent of flow).
+    static func capacity(in area: CGRect, timeString: String) -> Int {
+        layout(count: Int.max, in: area, flowOffset: 0, timeString: timeString).count
+    }
+
+    /// The phrases that cycle through the trail, one per block.
+    enum BlockContent {
+        case text(String)
+        case symbol(String)
+        case currentTime
+    }
+
+    static let blocks: [BlockContent] = [
+        .text("Cautions! Your focus session has fully ended now"),
+        .symbol("globe.fill"),
+        .text("Time's up — please wrap up whatever you're on"),
+        .currentTime,
+        .symbol("hand.raised.palm.facing"),
+        .text("Hey, the clock ran out — go take a real break now"),
+        .symbol("heart.badge.bolt"),
+        .text("Stop right there, your scheduled time is officially over"),
+        .symbol("eyes.inverse"),
+        .symbol("trash"),
+        .text("Seriously, step away from the screen and stretch a little"),
+        .symbol("basketball"),
+        .symbol("flag.pattern.checkered")
+    ]
+
+    static func content(at index: Int) -> BlockContent {
+        blocks[index % blocks.count]
+    }
+
+    struct GlyphRel {
+        let character: Character
+        let isSymbol: Bool
+        let symbolName: String?
+        let center: CGFloat
+    }
+
+    static func itemCount(after elapsed: CGFloat) -> Int {
+        2 + max(0, Int(floor(TimeInterval(max(0, elapsed)) / repeatInterval)))
+    }
+
+    static func currentTimeString() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: Date())
     }
 
     static func layoutArea(screenFrame: CGRect, visibleFrame: CGRect) -> CGRect {
@@ -152,265 +241,289 @@ private enum TravelingTimeOutGeometry {
         )
     }
 
-    static func perimeterPath(in area: CGRect) -> RoundedRectPath {
+    /// Concentric rounded-rect ring `index` (0 = outermost). Returns nil once the
+    /// ring would collapse below the band width, so the spiral knows when to stop.
+    static func ring(_ index: Int, in area: CGRect) -> RoundedRectPath? {
+        let ringInset = inset + CGFloat(index) * ringSpacing
         let rect = CGRect(
-            x: area.minX + inset,
-            y: area.minY + inset,
-            width: area.width - inset * 2,
-            height: area.height - inset * 2
+            x: area.minX + ringInset,
+            y: area.minY + ringInset,
+            width: area.width - ringInset * 2,
+            height: area.height - ringInset * 2
         )
-        return RoundedRectPath(rect: rect, radius: min(cornerRadius, min(rect.width, rect.height) / 2))
+        guard rect.width > bandWidth, rect.height > bandWidth else { return nil }
+        // Shrink each ring's corner radius concentrically so inner corners nest
+        // tightly inside the outer corner instead of bulging out.
+        let nestedRadius = max(bandWidth / 2, cornerRadius - CGFloat(index) * ringSpacing)
+        return RoundedRectPath(rect: rect, radius: min(nestedRadius, min(rect.width, rect.height) / 2))
     }
 
-    static func startDistance(for position: OverlayPosition, on path: RoundedRectPath) -> CGFloat {
-        let bottomLineStart = path.lineH + path.arc + path.lineV + path.arc
+    /// All blocks start their trail from the top-center of the screen edge,
+    /// regardless of the timer's overlay position.
+    static func startDistance(on path: RoundedRectPath) -> CGFloat {
+        path.lineH / 2
+    }
 
-        switch position {
-        case .topLeading:
-            return 0
-        case .topCenter:
-            return path.lineH / 2
-        case .topTrailing:
-            return path.lineH
-        case .middleTrailing:
-            return path.lineH + path.arc + path.lineV / 2
-        case .bottomTrailing:
-            return bottomLineStart
-        case .bottomCenter:
-            return bottomLineStart + path.lineH / 2
-        case .bottomLeading:
-            return bottomLineStart + path.lineH
-        case .middleLeading:
-            return bottomLineStart + path.lineH + path.arc + path.lineV / 2
+    private static func measure(_ content: BlockContent, font: NSFont, timeString: String) -> (glyphs: [GlyphRel], width: CGFloat) {
+        switch content {
+        case .symbol(let name):
+            return ([GlyphRel(character: " ", isSymbol: true, symbolName: name, center: symbolSize / 2)], symbolSize)
+        case .text(let string):
+            return measureText(string, font: font)
+        case .currentTime:
+            return measureText("It's already \(timeString) — step away for a moment", font: font)
         }
     }
 
-    static func filledLength(for itemCount: Int, on path: RoundedRectPath) -> CGFloat {
-        let layout = contentLayout()
-        let cappedItemCount = min(itemCount, maxItemCount(on: path, layout: layout))
-        let textTrailLength = layout.firstTotal + CGFloat(max(0, cappedItemCount - 1)) * layout.repeatedTotal
-        let length = textTrailLength + layout.terminalEndExtension
-        return length
-    }
-
-    static func maxItemCount(on path: RoundedRectPath, layout: ContentLayout = contentLayout()) -> Int {
-        let remaining = path.total - layout.firstTotal - layout.terminalEndExtension
-        guard remaining > 0 else { return 1 }
-        return max(1, Int(floor(remaining / layout.repeatedTotal)) + 1)
-    }
-
-    static func contentLayout() -> ContentLayout {
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
-        let firstLeadPad: CGFloat = -18
-        let xSize: CGFloat = 30
-        let iconTextGap: CGFloat = 4
-        let wordGap = (" " as NSString).size(withAttributes: [.font: font]).width
-        let firstTrailPad: CGFloat = 0
-        let repeatedLeadPad: CGFloat = wordGap
-        let repeatedTrailPad: CGFloat = 0
-        let terminalTextToRoundGap: CGFloat = 16
-
-        var firstCursor = firstLeadPad
-        let xCenter = firstCursor + xSize / 2
-        firstCursor += xSize + iconTextGap
-        let firstGlyphs = messageGlyphs(startingAt: firstCursor, font: font)
-        firstCursor = (firstGlyphs.last?.trailingEdge ?? firstCursor) + firstTrailPad
-
-        var repeatedCursor = repeatedLeadPad
-        let repeatedGlyphs = messageGlyphs(startingAt: repeatedCursor, font: font)
-        repeatedCursor = (repeatedGlyphs.last?.trailingEdge ?? repeatedCursor) + repeatedTrailPad
-
-        return ContentLayout(
-            xCenter: xCenter,
-            firstGlyphs: firstGlyphs,
-            repeatedGlyphs: repeatedGlyphs,
-            firstTotal: firstCursor,
-            repeatedTotal: repeatedCursor,
-            terminalEndExtension: terminalTextToRoundGap
-        )
-    }
-
-    private static func messageGlyphs(startingAt start: CGFloat, font: NSFont) -> [PlacedGlyph] {
-        var cursor = start
-        return message.enumerated().map { index, character in
+    private static func measureText(_ string: String, font: NSFont) -> (glyphs: [GlyphRel], width: CGFloat) {
+        var cursor: CGFloat = 0
+        var glyphs: [GlyphRel] = []
+        for character in string {
             let advance = (String(character) as NSString).size(withAttributes: [.font: font]).width
-            defer { cursor += advance }
-            return PlacedGlyph(
-                id: index,
-                character: character,
-                center: cursor + advance / 2,
-                trailingEdge: cursor + advance
-            )
+            glyphs.append(GlyphRel(character: character, isSymbol: false, symbolName: nil, center: cursor + advance / 2))
+            cursor += advance
         }
+        return (glyphs, cursor)
+    }
+
+    /// Lays out up to `count` separated capsule blocks. Block 0 is the close
+    /// button (its own capsule); the rest cycle the phrases. Blocks fill clockwise
+    /// from the top-center; when a loop completes, the trail steps to the next
+    /// inner ring — starting directly below where the previous ring ran out of
+    /// room so the seam bends downward — and stops after `maxLoops` loops.
+    static let maxLoops = 1
+
+    static func layout(count: Int, in area: CGRect, flowOffset: CGFloat = 0, timeString: String) -> [BlockLayout] {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        var ringIndex = 0
+        guard var currentRing = ring(ringIndex, in: area) else { return [] }
+        var base = startDistance(on: currentRing)
+        var cursor = base
+        var lastBlockEnd = base
+        var layouts: [BlockLayout] = []
+        var glyphID = 0
+
+        for index in 0..<max(0, count) {
+            // Block 0 is the standalone close button; the rest cycle the phrases.
+            let blockContent: BlockContent = index == 0 ? .symbol("xmark.circle.fill") : content(at: index - 1)
+            let measured = measure(blockContent, font: font, timeString: timeString)
+            let blockLength = sidePadding * 2 + measured.width
+
+            // After a full loop, step inward (up to maxLoops) or stop.
+            if cursor + blockLength > base + currentRing.total {
+                guard ringIndex + 1 < maxLoops, let next = ring(ringIndex + 1, in: area) else { break }
+                let dropPoint = currentRing.locate(lastBlockEnd).0
+                ringIndex += 1
+                currentRing = next
+                let seam = min(currentRing.lineH, max(0, dropPoint.x - (currentRing.rect.minX + currentRing.r)))
+                base = seam
+                cursor = seam
+                lastBlockEnd = seam
+                if cursor + blockLength > base + currentRing.total { break }
+            }
+
+            let contentStart = cursor + sidePadding + flowOffset
+            let glyphs = measured.glyphs.map { glyph -> PlacedGlyph in
+                defer { glyphID += 1 }
+                let placement = currentRing.locate(contentStart + glyph.center)
+                return PlacedGlyph(
+                    id: glyphID,
+                    character: glyph.character,
+                    isSymbol: glyph.isSymbol,
+                    symbolName: glyph.symbolName,
+                    position: placement.0,
+                    angle: placement.1
+                )
+            }
+
+            layouts.append(BlockLayout(id: index, band: bandPath(on: currentRing, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
+            lastBlockEnd = cursor + blockLength
+            cursor = lastBlockEnd + blockGap
+        }
+
+        return layouts
+    }
+
+    /// Builds the filled capsule shape for one block along the given ring.
+    static func bandPath(on ring: RoundedRectPath, start: CGFloat, length: CGFloat) -> Path {
+        let capRadius = bandWidth / 2
+        let s0 = start + capRadius
+        let s1 = start + length - capRadius
+
+        var p = Path()
+        guard s1 > s0 else {
+            let center = ring.locate(start + length / 2).0
+            p.addEllipse(in: CGRect(x: center.x - capRadius, y: center.y - capRadius, width: bandWidth, height: bandWidth))
+            return p
+        }
+
+        let steps = max(2, Int((s1 - s0) / 6))
+        for index in 0...steps {
+            let s = s0 + (s1 - s0) * CGFloat(index) / CGFloat(steps)
+            let point = ring.locate(s).0
+            if index == 0 { p.move(to: point) } else { p.addLine(to: point) }
+        }
+        return p.strokedPath(StrokeStyle(lineWidth: bandWidth, lineCap: .round, lineJoin: .round))
+    }
+
+    static func contains(_ point: CGPoint, in area: CGRect, itemCount: Int, flowOffset: CGFloat) -> Bool {
+        let layouts = layout(count: itemCount, in: area, flowOffset: flowOffset, timeString: currentTimeString())
+        return layouts.contains { $0.band.contains(point) }
     }
 }
 
 // MARK: - Fill driver
 
 private final class TimeOutFillModel: ObservableObject {
-    @Published var itemCount = 1
+    // Start with the close button and the first phrase already showing.
+    @Published var itemCount = 2
+    /// Number of leading capsules already retracted during the close animation.
+    @Published var closedCount = 0
 
-    private var timer: Timer?
+    private var revealTimer: Timer?
+    private var closeTimer: Timer?
+    private var isClosing = false
+
+    /// Fast retract interval, per capsule.
+    private let closeInterval: TimeInterval = 0.05
 
     func start() {
-        guard timer == nil else { return }
+        guard revealTimer == nil else { return }
         let tick = Timer(timeInterval: TravelingTimeOutGeometry.repeatInterval, repeats: true) { [weak self] _ in
             self?.itemCount += 1
         }
         RunLoop.main.add(tick, forMode: .common)
-        timer = tick
+        revealTimer = tick
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        revealTimer?.invalidate()
+        revealTimer = nil
+        closeTimer?.invalidate()
+        closeTimer = nil
+    }
+
+    /// Retract capsules one at a time from the close button outward, then finish.
+    func beginClose(total: Int, onComplete: @escaping () -> Void) {
+        guard !isClosing else { return }
+        isClosing = true
+        revealTimer?.invalidate()
+        revealTimer = nil
+
+        guard total > 0 else {
+            onComplete()
+            return
+        }
+
+        let tick = Timer(timeInterval: closeInterval, repeats: true) { [weak self] timer in
+            guard let self else { return }
+            self.closedCount += 1
+            if self.closedCount >= total {
+                timer.invalidate()
+                onComplete()
+            }
+        }
+        RunLoop.main.add(tick, forMode: .common)
+        closeTimer = tick
     }
 }
 
-// MARK: - Growing, bending capsule trail
+// MARK: - Growing trail of separated phrase blocks
 
 struct TravelingTimeOutView: View {
     @ObservedObject var model: TimerModel
     let screenFrame: CGRect
     let visibleFrame: CGRect
+    let startTime: CFTimeInterval
     @StateObject private var fill = TimeOutFillModel()
 
     private let yellow = Color(red: 1.0, green: 0.82, blue: 0.0)
     private let ink = Color(white: 0.133)
 
     var body: some View {
-        GeometryReader { geo in
-            let area = TravelingTimeOutGeometry.layoutArea(
-                screenFrame: screenFrame,
-                visibleFrame: visibleFrame
+        let area = TravelingTimeOutGeometry.layoutArea(
+            screenFrame: screenFrame,
+            visibleFrame: visibleFrame
+        )
+
+        TimelineView(.animation) { _ in
+            let timeString = TravelingTimeOutGeometry.currentTimeString()
+            let now = CACurrentMediaTime()
+            let capacity = TravelingTimeOutGeometry.capacity(in: area, timeString: timeString)
+            let revealDuration = TravelingTimeOutGeometry.revealDuration(capacity: capacity)
+            // Hold the trail still until every capsule has appeared; flow pauses
+            // again whenever the cursor hovers a capsule.
+            let flowSeconds = model.flowSeconds(now: now, startTime: startTime, revealDuration: revealDuration)
+            let flow = TravelingTimeOutGeometry.flowOffset(flowSeconds: flowSeconds)
+            let layouts = TravelingTimeOutGeometry.layout(
+                count: fill.itemCount,
+                in: area,
+                flowOffset: flow,
+                timeString: timeString
             )
-            let path = TravelingTimeOutGeometry.perimeterPath(in: area)
-            let layout = TravelingTimeOutGeometry.contentLayout()
-            let start = TravelingTimeOutGeometry.startDistance(for: model.overlayPosition, on: path)
-            let maxItemCount = TravelingTimeOutGeometry.maxItemCount(on: path, layout: layout)
-            let visibleItemCount = min(fill.itemCount, maxItemCount)
-            let filledLength = TravelingTimeOutGeometry.filledLength(for: visibleItemCount, on: path)
+            // Hide leading capsules already retracted by the close animation.
+            let visible = layouts.filter { $0.id >= fill.closedCount }
 
             ZStack {
-                band(path: path, start: start, length: filledLength)
-                    .fill(yellow)
-                startCap(path: path, start: start)
-                    .fill(yellow)
-                endCap(path: path, start: start, visualLength: filledLength)
-                    .fill(yellow)
-
-                glyph("", at: start + layout.xCenter, on: path, isSymbol: true)
-                ForEach(layout.firstGlyphs) { item in
-                    glyph(item, at: start + item.center, on: path)
+                ForEach(visible) { layout in
+                    layout.band.fill(yellow)
                 }
-                ForEach(1..<visibleItemCount, id: \.self) { index in
-                    ForEach(layout.repeatedGlyphs) { item in
-                        glyph(
-                            item,
-                            at: start + layout.firstTotal + CGFloat(index - 1) * layout.repeatedTotal + item.center,
-                            on: path
-                        )
+                ForEach(visible) { layout in
+                    ForEach(layout.glyphs) { item in
+                        glyph(item)
                     }
                 }
             }
             .onAppear { fill.start() }
             .onDisappear { fill.stop() }
+            .onChange(of: model.isClosing) { closing in
+                guard closing else { return }
+                let total = TravelingTimeOutGeometry.layout(
+                    count: fill.itemCount,
+                    in: area,
+                    timeString: TravelingTimeOutGeometry.currentTimeString()
+                ).count
+                fill.beginClose(total: total) { model.stop() }
+            }
         }
         .ignoresSafeArea()
     }
 
     @ViewBuilder
-    private func glyph(_ text: String, at s: CGFloat, on path: RoundedRectPath, isSymbol: Bool = false) -> some View {
-        let placement = path.locate(s)
+    private func glyph(_ item: PlacedGlyph) -> some View {
         Group {
-            if isSymbol {
-                Image(systemName: "xmark.circle.fill")
+            if item.isSymbol, let symbolName = item.symbolName {
+                Image(systemName: symbolName)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 30, height: 30)
+                    .frame(width: TravelingTimeOutGeometry.symbolSize, height: TravelingTimeOutGeometry.symbolSize)
                     .foregroundColor(ink)
             } else {
-                Text(text)
+                Text(String(item.character))
                     .font(.system(size: TravelingTimeOutGeometry.fontSize, weight: .semibold))
                     .foregroundColor(ink)
                     .fixedSize()
             }
         }
-        .rotationEffect(.radians(Double(readableAngle(placement.1))))
-        .position(placement.0)
-        .allowsHitTesting(false)   // taps go to the band beneath
-    }
-
-    @ViewBuilder
-    private func glyph(_ item: PlacedGlyph, at s: CGFloat, on path: RoundedRectPath) -> some View {
-        let placement = path.locate(s)
-        Text(String(item.character))
-            .font(.system(size: TravelingTimeOutGeometry.fontSize, weight: .semibold))
-            .foregroundColor(ink)
-            .fixedSize()
-            .rotationEffect(.radians(Double(readableAngle(placement.1))))
-            .position(placement.0)
-            .allowsHitTesting(false)
-    }
-
-    private func readableAngle(_ angle: CGFloat) -> CGFloat {
-        var normalized = atan2(sin(angle), cos(angle))
-        if normalized > .pi / 2 {
-            normalized -= .pi
-        } else if normalized < -.pi / 2 {
-            normalized += .pi
-        }
-        return normalized
-    }
-
-    private func band(path: RoundedRectPath, start: CGFloat, length: CGFloat) -> Path {
-        var p = Path()
-        let drawnLength = max(0, length - TravelingTimeOutGeometry.bandWidth / 2)
-        let steps = max(2, Int(drawnLength / 6))
-        for i in 0...steps {
-            let s = start + drawnLength * CGFloat(i) / CGFloat(steps)
-            let point = path.locate(s).0
-            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-        }
-        return p.strokedPath(StrokeStyle(lineWidth: TravelingTimeOutGeometry.bandWidth, lineCap: .butt, lineJoin: .round))
-    }
-
-    private func startCap(path: RoundedRectPath, start: CGFloat) -> Path {
-        let point = path.locate(start).0
-        return Path(ellipseIn: CGRect(
-            x: point.x - TravelingTimeOutGeometry.bandWidth / 2,
-            y: point.y - TravelingTimeOutGeometry.bandWidth / 2,
-            width: TravelingTimeOutGeometry.bandWidth,
-            height: TravelingTimeOutGeometry.bandWidth
-        ))
-    }
-
-    private func endCap(path: RoundedRectPath, start: CGFloat, visualLength: CGFloat) -> Path {
-        let capRadius = TravelingTimeOutGeometry.bandWidth / 2
-        let point = path.locate(start + max(0, visualLength - capRadius)).0
-        return Path(ellipseIn: CGRect(
-            x: point.x - capRadius,
-            y: point.y - capRadius,
-            width: TravelingTimeOutGeometry.bandWidth,
-            height: TravelingTimeOutGeometry.bandWidth
-        ))
+        .rotationEffect(.radians(Double(item.angle)))
+        .position(item.position)
+        .allowsHitTesting(false)
     }
 }
 
 private struct PlacedGlyph: Identifiable {
     let id: Int
     let character: Character
-    let center: CGFloat
-    let trailingEdge: CGFloat
+    let isSymbol: Bool
+    let symbolName: String?
+    let position: CGPoint
+    let angle: CGFloat
 }
 
-private struct ContentLayout {
-    let xCenter: CGFloat
-    let firstGlyphs: [PlacedGlyph]
-    let repeatedGlyphs: [PlacedGlyph]
-    let firstTotal: CGFloat
-    let repeatedTotal: CGFloat
-    let terminalEndExtension: CGFloat
+private struct BlockLayout: Identifiable {
+    let id: Int
+    let band: Path
+    let glyphs: [PlacedGlyph]
 }
 
 /// Arc-length parameterization of a rounded rectangle, walked clockwise starting

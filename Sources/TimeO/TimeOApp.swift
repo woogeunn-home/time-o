@@ -8,7 +8,7 @@ struct TimeOApp: App {
     @State private var selectedMinutes = 30
 
     var body: some Scene {
-        MenuBarExtra("TimeO", systemImage: "hourglass") {
+        MenuBarExtra("TimeO", systemImage: "timer.circle.fill") {
             TimerMenuBarWindow(
                 model: appState.model,
                 selectedMinutes: $selectedMinutes,
@@ -60,6 +60,21 @@ final class TimerModel: ObservableObject {
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
     @Published var isFinished = false
+    /// Set when the user dismisses the "Time's Up" overlay, so it can play a
+    /// fast sequential close before the overlay is torn down.
+    @Published var isClosing = false
+
+    /// Hover-to-pause bookkeeping for the flowing "Time's Up" trail. Plain values
+    /// (not published) — the overlay redraws every frame and reads them directly.
+    var flowPausedTotal: Double = 0
+    var flowPauseStartedAt: Double?
+
+    /// Effective seconds the trail has been flowing: elapsed since the reveal
+    /// finished, minus any time spent paused while hovered.
+    func flowSeconds(now: Double, startTime: Double, revealDuration: Double) -> Double {
+        let activePause = flowPauseStartedAt.map { now - $0 } ?? 0
+        return max(0, now - startTime - revealDuration - flowPausedTotal - activePause)
+    }
 
     private var endDate: Date?
     private var timer: Timer?
@@ -95,6 +110,7 @@ final class TimerModel: ObservableObject {
         isRunning = true
         isPaused = false
         isFinished = false
+        resetFlow()
         scheduleTimer()
     }
 
@@ -142,6 +158,8 @@ final class TimerModel: ObservableObject {
         isPaused = false
         isOverlayHovered = false
         isFinished = false
+        isClosing = false
+        resetFlow()
     }
 
     /// Timer reached zero: keep the overlay on screen showing "Time Out!" until
@@ -154,7 +172,14 @@ final class TimerModel: ObservableObject {
         isRunning = false
         isPaused = false
         isOverlayHovered = false
+        isClosing = false
+        resetFlow()
         isFinished = true
+    }
+
+    private func resetFlow() {
+        flowPausedTotal = 0
+        flowPauseStartedAt = nil
     }
 
     private func scheduleTimer() {
@@ -346,7 +371,7 @@ struct TimerMenuBarWindow: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 6) {
+            VStack(spacing: 1) {
                 Text(model.formattedRemaining)
                     .font(.system(size: 18, weight: .semibold, design: .default))
                     .monospacedDigit()
@@ -502,10 +527,7 @@ struct TimerMenuBarWindow: View {
     }
 
     private var popoverContentHeight: CGFloat {
-        if model.isRunning {
-            return 142
-        }
-        return isCustomMinutesPresented ? 150 : 132
+        150
     }
 
     private func startCustomMinutes() {
