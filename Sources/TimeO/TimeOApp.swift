@@ -344,12 +344,14 @@ struct TimerMenuBarWindow: View {
 
     private var runningControls: some View {
         VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
             Text(model.formattedEndTime)
                 .font(.system(size: 18, weight: .medium, design: .default))
                 .foregroundStyle(.secondary)
-                .padding(.top, 10)
+                .padding(.bottom, 20)
 
-            Spacer(minLength: 18)
+            Spacer(minLength: 0)
 
             HStack(spacing: 8) {
                 Button {
@@ -369,6 +371,8 @@ struct TimerMenuBarWindow: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+
+            Spacer(minLength: 0)
         }
         .frame(width: contentWidth)
     }
