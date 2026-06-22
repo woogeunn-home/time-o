@@ -346,10 +346,19 @@ struct TimerMenuBarWindow: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            Text(model.formattedEndTime)
-                .font(.system(size: 18, weight: .medium, design: .default))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 20)
+            VStack(spacing: 6) {
+                Text(model.formattedRemaining)
+                    .font(.system(size: 32, weight: .semibold, design: .default))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+
+                Text(model.formattedEndTime)
+                    .font(.system(size: 18, weight: .medium, design: .default))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+            .padding(.bottom, 20)
 
             Spacer(minLength: 0)
 
