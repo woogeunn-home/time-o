@@ -229,12 +229,14 @@ struct TimerMenuBarWindow: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var isCustomMinutesPresented = false
+    @State private var isPositionPopoverPresented = false
     @State private var customMinutesText = ""
     @FocusState private var isCustomMinutesFocused: Bool
 
     private let contentWidth: CGFloat = 320
-    private let contentHeight: CGFloat = 278
+    private let contentHeight: CGFloat = 168
     private let contentPadding: CGFloat = 12
+    private let positionBoardWidth: CGFloat = 224
 
     private let presets = [
         ("30m", 30),
@@ -263,10 +265,6 @@ struct TimerMenuBarWindow: View {
             } else {
                 presetControls
             }
-
-            Divider()
-
-            positionBoard
         }
     }
 
@@ -276,6 +274,13 @@ struct TimerMenuBarWindow: View {
                 .font(.headline)
 
             Spacer()
+
+            iconButton(systemName: "circle.grid.3x3") {
+                isPositionPopoverPresented.toggle()
+            }
+            .popover(isPresented: $isPositionPopoverPresented, arrowEdge: .top) {
+                positionPopoverContent
+            }
 
             iconButton(systemName: themeToggleIconName) {
                 toggleAppearanceMode()
@@ -371,7 +376,13 @@ struct TimerMenuBarWindow: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
         }
-        .frame(width: contentWidth, height: 140)
+        .frame(width: positionBoardWidth, height: 140)
+    }
+
+    private var positionPopoverContent: some View {
+        positionBoard
+            .padding(12)
+            .frame(width: 248, height: 164)
     }
 
     private func positionButtonRow(
@@ -396,6 +407,7 @@ struct TimerMenuBarWindow: View {
         if let position {
             Button {
                 model.overlayPosition = position
+                isPositionPopoverPresented = false
             } label: {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(positionNodeFill(for: position))
