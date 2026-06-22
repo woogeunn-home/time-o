@@ -79,6 +79,14 @@ final class TimerModel: ObservableObject {
         return max(0, min(1, Double(remainingSeconds) / Double(totalSeconds)))
     }
 
+    var formattedEndTime: String {
+        let targetDate = endDate ?? Date().addingTimeInterval(TimeInterval(remainingSeconds))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return "Ends at \(formatter.string(from: targetDate))"
+    }
+
     func start(minutes: Int) {
         let clampedMinutes = max(1, min(minutes, 24 * 60))
         totalSeconds = clampedMinutes * 60
@@ -336,32 +344,30 @@ struct TimerMenuBarWindow: View {
 
     private var runningControls: some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 24)
+            Text(model.formattedEndTime)
+                .font(.system(size: 18, weight: .medium, design: .default))
+                .foregroundStyle(.secondary)
+                .padding(.top, 10)
 
-            VStack(spacing: 12) {
-                Text(model.formattedRemaining)
-                    .font(.system(size: 32, weight: .semibold, design: .default))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
+            Spacer(minLength: 18)
 
-                HStack(spacing: 8) {
-                    Button {
-                        model.togglePause()
-                    } label: {
-                        Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity)
-
-                    menuButton(maxWidth: .infinity) {
-                        Image(systemName: "stop.fill")
-                    } action: {
-                        model.stop()
-                    }
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                Button {
+                    model.togglePause()
+                } label: {
+                    Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+
+                menuButton(maxWidth: .infinity) {
+                    Image(systemName: "stop.fill")
+                } action: {
+                    model.stop()
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         .frame(width: contentWidth)
@@ -484,7 +490,7 @@ struct TimerMenuBarWindow: View {
 
     private var popoverContentHeight: CGFloat {
         if model.isRunning {
-            return 176
+            return 142
         }
         return isCustomMinutesPresented ? 150 : 132
     }
