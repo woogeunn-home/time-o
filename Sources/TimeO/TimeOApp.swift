@@ -598,8 +598,8 @@ final class OverlayWindow: NSPanel {
             isVerticalPosition = false
         }
 
-        let targetWidth: CGFloat = isVerticalPosition ? 76 : capsuleWidth
-        let targetHeight: CGFloat = isVerticalPosition ? capsuleWidth : 76
+        let targetWidth: CGFloat = isVerticalPosition ? 56 : capsuleWidth
+        let targetHeight: CGFloat = isVerticalPosition ? capsuleWidth : 56
         let width: CGFloat = min(targetWidth, visibleFrame.width - 48)
         let height: CGFloat = min(targetHeight, visibleFrame.height - 48)
         let inset: CGFloat = 4
@@ -630,7 +630,7 @@ final class OverlayWindow: NSPanel {
     private static func centerOverlayWidth(for text: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(240, textWidth + 48)
+        return max(168, textWidth + 32)
     }
 }
 
@@ -1241,8 +1241,8 @@ struct NormalTimerText: View {
     var body: some View {
         TimerSurface(isHovered: isHovered) { _ in
             timerText
-                .padding(.horizontal, 24)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
                 .frame(width: capsuleWidth, height: capsuleHeight)
         } background: { _ in
             FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
@@ -1269,11 +1269,11 @@ struct NormalTimerText: View {
     private var capsuleWidth: CGFloat {
         let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(240, textWidth + 48)
+        return max(168, textWidth + 32)
     }
 
     private var capsuleHeight: CGFloat {
-        68
+        56
     }
 
     private var timerText: some View {
