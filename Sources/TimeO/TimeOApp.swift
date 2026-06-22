@@ -234,7 +234,6 @@ struct TimerMenuBarWindow: View {
     @FocusState private var isCustomMinutesFocused: Bool
 
     private let contentWidth: CGFloat = 320
-    private let contentHeight: CGFloat = 168
     private let contentPadding: CGFloat = 12
     private let positionBoardWidth: CGFloat = 224
 
@@ -250,7 +249,7 @@ struct TimerMenuBarWindow: View {
         .padding(contentPadding)
         .frame(
             width: contentWidth + contentPadding * 2,
-            height: contentHeight + contentPadding * 2,
+            height: popoverContentHeight + contentPadding * 2,
             alignment: .top
         )
     }
@@ -336,23 +335,34 @@ struct TimerMenuBarWindow: View {
     }
 
     private var runningControls: some View {
-        HStack(spacing: 8) {
-            Button {
-                model.togglePause()
-            } label: {
-                Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .frame(maxWidth: .infinity)
+        VStack(spacing: 0) {
+            Spacer(minLength: 24)
 
-            menuButton(maxWidth: .infinity) {
-                Image(systemName: "stop.fill")
-            } action: {
-                model.stop()
+            VStack(spacing: 12) {
+                Text(model.formattedRemaining)
+                    .font(.system(size: 32, weight: .semibold, design: .default))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.togglePause()
+                    } label: {
+                        Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+
+                    menuButton(maxWidth: .infinity) {
+                        Image(systemName: "stop.fill")
+                    } action: {
+                        model.stop()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .frame(maxWidth: .infinity)
         }
         .frame(width: contentWidth)
     }
@@ -470,6 +480,13 @@ struct TimerMenuBarWindow: View {
 
     private func positionNodeStroke(for position: OverlayPosition) -> Color {
         position == model.overlayPosition ? Color.white.opacity(0.95) : Color.white.opacity(0.18)
+    }
+
+    private var popoverContentHeight: CGFloat {
+        if model.isRunning {
+            return 176
+        }
+        return isCustomMinutesPresented ? 150 : 132
     }
 
     private func startCustomMinutes() {
