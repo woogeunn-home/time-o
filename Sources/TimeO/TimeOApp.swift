@@ -391,7 +391,7 @@ struct TimerMenuBarWindow: View {
     }
 
     private var themeToggleIconName: String {
-        resolvedIsDark ? "moon.fill" : "sun.max.fill"
+        resolvedIsDark ? "moon" : "sun.max"
     }
 
     private var resolvedIsDark: Bool {
