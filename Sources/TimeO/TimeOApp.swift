@@ -220,13 +220,14 @@ struct TimerMenuBarWindow: View {
     @Binding var selectedMinutes: Int
     var onTogglePathDemo: () -> Void = {}
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var isCustomMinutesPresented = false
     @State private var customMinutesText = ""
     @FocusState private var isCustomMinutesFocused: Bool
 
     private let contentWidth: CGFloat = 320
-    private let contentHeight: CGFloat = 258
+    private let contentHeight: CGFloat = 212
     private let contentPadding: CGFloat = 12
     private let settingControlWidth: CGFloat = 190
 
@@ -260,17 +261,6 @@ struct TimerMenuBarWindow: View {
 
             Divider()
 
-            settingRow(title: "Mood") {
-                Picker("Mood", selection: $model.appearanceMode) {
-                    ForEach(OverlayAppearanceMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .controlSize(.regular)
-            }
-
             settingRow(title: "Position") {
                 Picker("Position", selection: $model.overlayPosition) {
                     ForEach(OverlayPosition.allCases) { position in
@@ -290,6 +280,10 @@ struct TimerMenuBarWindow: View {
                 .font(.headline)
 
             Spacer()
+
+            iconButton(systemName: themeToggleIconName) {
+                toggleAppearanceMode()
+            }
 
             iconButton(systemName: "power") {
                 NSApplication.shared.terminate(nil)
@@ -394,6 +388,25 @@ struct TimerMenuBarWindow: View {
             Image(systemName: systemName)
         }
         .buttonStyle(.borderless)
+    }
+
+    private var themeToggleIconName: String {
+        resolvedIsDark ? "moon.fill" : "sun.max.fill"
+    }
+
+    private var resolvedIsDark: Bool {
+        switch model.appearanceMode {
+        case .automatic:
+            colorScheme == .dark
+        case .light:
+            false
+        case .dark:
+            true
+        }
+    }
+
+    private func toggleAppearanceMode() {
+        model.appearanceMode = resolvedIsDark ? .light : .dark
     }
 
     private func startCustomMinutes() {
