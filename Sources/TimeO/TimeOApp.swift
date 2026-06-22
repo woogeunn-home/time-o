@@ -31,13 +31,19 @@ enum OverlayPosition: String, CaseIterable, Identifiable {
     case topLeading = "Top Left"
     case topCenter = "Top Center"
     case topTrailing = "Top Right"
+    case middleLeading = "Middle Left"
+    case middleTrailing = "Middle Right"
     case bottomLeading = "Bottom Left"
     case bottomCenter = "Bottom Center"
     case bottomTrailing = "Bottom Right"
 
     static let allCases: [OverlayPosition] = [
+        .topLeading,
         .topCenter,
         .topTrailing,
+        .middleLeading,
+        .middleTrailing,
+        .bottomLeading,
         .bottomCenter,
         .bottomTrailing
     ]
@@ -583,27 +589,28 @@ final class OverlayWindow: NSPanel {
         text: String
     ) -> NSRect {
         let visibleFrame = screen.visibleFrame
-        let isCornerPosition: Bool
+        let capsuleWidth = centerOverlayWidth(for: text)
+        let isVerticalPosition: Bool
         switch position {
-        case .topLeading, .topTrailing, .bottomLeading, .bottomTrailing:
-            isCornerPosition = true
-        case .topCenter, .bottomCenter:
-            isCornerPosition = false
+        case .middleLeading, .middleTrailing:
+            isVerticalPosition = true
+        case .topLeading, .topCenter, .topTrailing, .bottomLeading, .bottomCenter, .bottomTrailing:
+            isVerticalPosition = false
         }
 
-        let targetWidth: CGFloat = isCornerPosition ? 220 : centerOverlayWidth(for: text)
-        let targetHeight: CGFloat = isCornerPosition ? 220 : 76
+        let targetWidth: CGFloat = isVerticalPosition ? 76 : capsuleWidth
+        let targetHeight: CGFloat = isVerticalPosition ? capsuleWidth : 76
         let width: CGFloat = min(targetWidth, visibleFrame.width - 48)
         let height: CGFloat = min(targetHeight, visibleFrame.height - 48)
         let inset: CGFloat = 4
 
         let x: CGFloat
         switch position {
-        case .topLeading, .bottomLeading:
+        case .topLeading, .middleLeading, .bottomLeading:
             x = visibleFrame.minX + inset
         case .topCenter, .bottomCenter:
             x = visibleFrame.midX - width / 2
-        case .topTrailing, .bottomTrailing:
+        case .topTrailing, .middleTrailing, .bottomTrailing:
             x = visibleFrame.maxX - width - inset
         }
 
@@ -611,6 +618,8 @@ final class OverlayWindow: NSPanel {
         switch position {
         case .topLeading, .topCenter, .topTrailing:
             y = visibleFrame.maxY - height - inset
+        case .middleLeading, .middleTrailing:
+            y = visibleFrame.midY - height / 2
         case .bottomLeading, .bottomCenter, .bottomTrailing:
             y = visibleFrame.minY + inset
         }
@@ -660,6 +669,8 @@ struct TimerOverlayView: View {
         case .topLeading: return .topLeading
         case .topCenter: return .top
         case .topTrailing: return .topTrailing
+        case .middleLeading: return .leading
+        case .middleTrailing: return .trailing
         case .bottomLeading: return .bottomLeading
         case .bottomCenter: return .bottom
         case .bottomTrailing: return .bottomTrailing
@@ -1229,74 +1240,40 @@ struct NormalTimerText: View {
 
     var body: some View {
         TimerSurface(isHovered: isHovered) { _ in
-            Group {
-                if isCornerPosition {
-                    cornerBody
-                } else {
-                    centerBody
-                }
-            }
+            timerText
+                .padding(.horizontal, 24)
+                .padding(.vertical, 10)
+                .frame(width: capsuleWidth, height: capsuleHeight)
         } background: { _ in
-            Group {
-                if isCornerPosition {
-                    TimerCornerBackground(
-                        isDark: resolvedIsDark,
-                        position: overlayPosition,
-                        contentLength: cornerSegmentLength
-                    )
-                } else {
-                    FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
-                }
-            }
+            FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
         }
-        .frame(width: isCornerPosition ? 220 : nil, height: isCornerPosition ? 220 : 68)
+        .frame(width: capsuleWidth, height: capsuleHeight)
+        .rotationEffect(.degrees(isVerticalPosition ? 90 : 0))
+        .frame(
+            width: isVerticalPosition ? capsuleHeight : capsuleWidth,
+            height: isVerticalPosition ? capsuleWidth : capsuleHeight
+        )
         .flipsForRightToLeftLayoutDirection(false)
         .environment(\.layoutDirection, .leftToRight)
     }
 
-    private var isCornerPosition: Bool {
+    private var isVerticalPosition: Bool {
         switch overlayPosition {
-        case .topLeading, .topTrailing, .bottomLeading, .bottomTrailing:
+        case .middleLeading, .middleTrailing:
             true
-        case .topCenter, .bottomCenter:
+        case .topLeading, .topCenter, .topTrailing, .bottomLeading, .bottomCenter, .bottomTrailing:
             false
         }
     }
 
-    private var centerBody: some View {
-        timerText
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-            .frame(minWidth: 168)
+    private var capsuleWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        return max(240, textWidth + 48)
     }
 
-    private var cornerBody: some View {
-        GeometryReader { geometry in
-            let path = TimerCornerPath(position: overlayPosition, rect: CGRect(origin: .zero, size: geometry.size))
-            let layout = cornerGlyphLayout()
-            let start = path.cornerDistance - layout.total / 2
-
-            ZStack {
-                ForEach(layout.glyphs) { item in
-                    let placement = path.locate(start + item.center)
-                    Text(String(item.character))
-                        .font(.system(size: 40, weight: .semibold, design: .default))
-                        .monospacedDigit()
-                        .foregroundStyle(textColor)
-                        .fixedSize()
-                        .rotationEffect(.radians(Double(readableCornerAngle(placement.angle))))
-                        .position(placement.point)
-                }
-            }
-        }
-    }
-
-    private func readableCornerAngle(_ angle: CGFloat) -> CGFloat {
-        overlayPosition == .topLeading ? angle + .pi : angle
-    }
-
-    private var cornerSegmentLength: CGFloat {
-        max(72, cornerGlyphLayout().total - 16)
+    private var capsuleHeight: CGFloat {
+        68
     }
 
     private var timerText: some View {
@@ -1308,236 +1285,6 @@ struct NormalTimerText: View {
             .fixedSize(horizontal: true, vertical: true)
             .frame(height: 48)
             .offset(y: -1)
-    }
-
-    private func cornerGlyphLayout() -> CornerTimerGlyphLayout {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
-        var cursor: CGFloat = 0
-        let glyphs = text.enumerated().map { index, character in
-            let advance = (String(character) as NSString).size(withAttributes: [.font: font]).width
-            defer { cursor += advance }
-            return CornerTimerGlyph(id: index, character: character, center: cursor + advance / 2)
-        }
-        return CornerTimerGlyphLayout(glyphs: glyphs, total: cursor)
-    }
-}
-
-private struct CornerTimerGlyph: Identifiable {
-    let id: Int
-    let character: Character
-    let center: CGFloat
-}
-
-private struct CornerTimerGlyphLayout {
-    let glyphs: [CornerTimerGlyph]
-    let total: CGFloat
-}
-
-struct TimerCornerBackground: View {
-    let isDark: Bool
-    let position: OverlayPosition
-    let contentLength: CGFloat
-
-    private var shape: TimerCornerShape {
-        TimerCornerShape(position: position, contentLength: contentLength)
-    }
-
-    var body: some View {
-        shape
-            .fill(.clear)
-            .background {
-                VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                    .clipShape(shape)
-            }
-            .overlay {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: isDark
-                                ? [
-                                    Color.black.opacity(0.20),
-                                    Color.black.opacity(0.26)
-                                ]
-                                : [
-                                    Color.white.opacity(0.46),
-                                    Color.white.opacity(0.40)
-                                ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-            .overlay {
-                shape
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(0.04),
-                                .white.opacity(0.02)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1
-                    )
-            }
-    }
-}
-
-struct TimerCornerShape: Shape {
-    let position: OverlayPosition
-    let contentLength: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        TimerCornerPath(position: position, rect: rect)
-            .segmentPath(length: contentLength)
-            .strokedPath(
-                StrokeStyle(
-                    lineWidth: TimerCornerPath.lineWidth,
-                    lineCap: .round,
-                    lineJoin: .round
-                )
-            )
-    }
-}
-
-private struct TimerCornerPath {
-    static let lineWidth: CGFloat = 60
-
-    let position: OverlayPosition
-    let rect: CGRect
-
-    private var inset: CGFloat { Self.lineWidth / 2 }
-    private var bendRadius: CGFloat { 80 }
-    private var minX: CGFloat { rect.minX + inset }
-    private var maxX: CGFloat { rect.maxX - inset }
-    private var minY: CGFloat { rect.minY + inset }
-    private var maxY: CGFloat { rect.maxY - inset }
-    private var lineA: CGFloat { max(0, maxX - minX - bendRadius) }
-    private var lineB: CGFloat { max(0, maxY - minY - bendRadius) }
-    private var arcLength: CGFloat { bendRadius * .pi / 2 }
-    private var total: CGFloat { max(1, lineA + arcLength + lineB) }
-    var cornerDistance: CGFloat { lineA + arcLength / 2 }
-
-    func segmentPath(length: CGFloat) -> Path {
-        let start = max(0, cornerDistance - length / 2)
-        let end = min(total, cornerDistance + length / 2)
-        let segmentLength = max(0, end - start)
-        let steps = max(2, Int(segmentLength / 5))
-
-        var path = Path()
-        for index in 0...steps {
-            let distance = start + segmentLength * CGFloat(index) / CGFloat(steps)
-            let point = locate(distance).point
-            if index == 0 {
-                path.move(to: point)
-            } else {
-                path.addLine(to: point)
-            }
-        }
-        return path
-    }
-
-    func path() -> Path {
-        var path = Path()
-        switch position {
-        case .topTrailing:
-            path.move(to: CGPoint(x: minX, y: minY))
-            path.addLine(to: CGPoint(x: maxX - bendRadius, y: minY))
-            path.addArc(center: CGPoint(x: maxX - bendRadius, y: minY + bendRadius), radius: bendRadius, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
-            path.addLine(to: CGPoint(x: maxX, y: maxY))
-        case .topLeading:
-            path.move(to: CGPoint(x: maxX, y: minY))
-            path.addLine(to: CGPoint(x: minX + bendRadius, y: minY))
-            path.addArc(center: CGPoint(x: minX + bendRadius, y: minY + bendRadius), radius: bendRadius, startAngle: .degrees(-90), endAngle: .degrees(-180), clockwise: true)
-            path.addLine(to: CGPoint(x: minX, y: maxY))
-        case .bottomTrailing:
-            path.move(to: CGPoint(x: minX, y: maxY))
-            path.addLine(to: CGPoint(x: maxX - bendRadius, y: maxY))
-            path.addArc(center: CGPoint(x: maxX - bendRadius, y: maxY - bendRadius), radius: bendRadius, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-            path.addLine(to: CGPoint(x: maxX, y: minY))
-        case .bottomLeading:
-            path.move(to: CGPoint(x: maxX, y: maxY))
-            path.addLine(to: CGPoint(x: minX + bendRadius, y: maxY))
-            path.addArc(center: CGPoint(x: minX + bendRadius, y: maxY - bendRadius), radius: bendRadius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-            path.addLine(to: CGPoint(x: minX, y: minY))
-        case .topCenter, .bottomCenter:
-            path.move(to: CGPoint(x: minX, y: rect.midY))
-            path.addLine(to: CGPoint(x: maxX, y: rect.midY))
-        }
-        return path
-    }
-
-    func locate(_ rawDistance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
-        let distance = min(max(0, rawDistance), total)
-
-        if distance <= lineA {
-            return locateOnFirstLine(distance)
-        }
-        if distance <= lineA + arcLength {
-            return locateOnArc(distance - lineA)
-        }
-        return locateOnSecondLine(distance - lineA - arcLength)
-    }
-
-    private func locateOnFirstLine(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
-        switch position {
-        case .topTrailing:
-            return (CGPoint(x: minX + distance, y: minY), 0)
-        case .topLeading:
-            return (CGPoint(x: maxX - distance, y: minY), .pi)
-        case .bottomTrailing:
-            return (CGPoint(x: minX + distance, y: maxY), 0)
-        case .bottomLeading:
-            return (CGPoint(x: maxX - distance, y: maxY), .pi)
-        case .topCenter, .bottomCenter:
-            return (CGPoint(x: minX + distance, y: rect.midY), 0)
-        }
-    }
-
-    private func locateOnArc(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
-        let progress = distance / bendRadius
-        switch position {
-        case .topTrailing:
-            let angle = -.pi / 2 + progress
-            return arcPlacement(center: CGPoint(x: maxX - bendRadius, y: minY + bendRadius), angle: angle, tangent: angle + .pi / 2)
-        case .topLeading:
-            let angle = -.pi / 2 - progress
-            return arcPlacement(center: CGPoint(x: minX + bendRadius, y: minY + bendRadius), angle: angle, tangent: angle - .pi / 2)
-        case .bottomTrailing:
-            let angle = .pi / 2 - progress
-            return arcPlacement(center: CGPoint(x: maxX - bendRadius, y: maxY - bendRadius), angle: angle, tangent: angle - .pi / 2)
-        case .bottomLeading:
-            let angle = .pi / 2 + progress
-            return arcPlacement(center: CGPoint(x: minX + bendRadius, y: maxY - bendRadius), angle: angle, tangent: angle + .pi / 2)
-        case .topCenter, .bottomCenter:
-            return locateOnFirstLine(distance)
-        }
-    }
-
-    private func locateOnSecondLine(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
-        switch position {
-        case .topTrailing:
-            return (CGPoint(x: maxX, y: minY + bendRadius + distance), .pi / 2)
-        case .topLeading:
-            return (CGPoint(x: minX, y: minY + bendRadius + distance), -.pi / 2)
-        case .bottomTrailing:
-            return (CGPoint(x: maxX, y: maxY - bendRadius - distance), -.pi / 2)
-        case .bottomLeading:
-            return (CGPoint(x: minX, y: maxY - bendRadius - distance), .pi / 2)
-        case .topCenter, .bottomCenter:
-            return locateOnFirstLine(distance)
-        }
-    }
-
-    private func arcPlacement(center: CGPoint, angle: CGFloat, tangent: CGFloat) -> (point: CGPoint, angle: CGFloat) {
-        (
-            CGPoint(
-                x: center.x + bendRadius * cos(angle),
-                y: center.y + bendRadius * sin(angle)
-            ),
-            tangent
-        )
     }
 }
 

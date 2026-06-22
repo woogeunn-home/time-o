@@ -172,12 +172,16 @@ private enum TravelingTimeOutGeometry {
             return path.lineH / 2
         case .topTrailing:
             return path.lineH
+        case .middleTrailing:
+            return path.lineH + path.arc + path.lineV / 2
         case .bottomTrailing:
             return bottomLineStart
         case .bottomCenter:
             return bottomLineStart + path.lineH / 2
         case .bottomLeading:
             return bottomLineStart + path.lineH
+        case .middleLeading:
+            return bottomLineStart + path.lineH + path.arc + path.lineV / 2
         }
     }
 
