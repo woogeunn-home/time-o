@@ -27,13 +27,6 @@ enum OverlayAppearanceMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum TimerDisplayStyle: String, CaseIterable, Identifiable {
-    case normal = "Normal"
-    case flapClock = "Flap Clock"
-
-    var id: String { rawValue }
-}
-
 enum OverlayPosition: String, CaseIterable, Identifiable {
     case topLeading = "Top Left"
     case topCenter = "Top Center"
@@ -41,6 +34,13 @@ enum OverlayPosition: String, CaseIterable, Identifiable {
     case bottomLeading = "Bottom Left"
     case bottomCenter = "Bottom Center"
     case bottomTrailing = "Bottom Right"
+
+    static let allCases: [OverlayPosition] = [
+        .topCenter,
+        .topTrailing,
+        .bottomCenter,
+        .bottomTrailing
+    ]
 
     var id: String { rawValue }
 }
@@ -51,7 +51,6 @@ final class TimerModel: ObservableObject {
     @Published var isRunning = false
     @Published var isPaused = false
     @Published var appearanceMode: OverlayAppearanceMode = .automatic
-    @Published var displayStyle: TimerDisplayStyle = .normal
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
     @Published var isFinished = false
@@ -221,138 +220,195 @@ struct TimerMenuBarWindow: View {
     @Binding var selectedMinutes: Int
     var onTogglePathDemo: () -> Void = {}
 
+    @Environment(\.dismiss) private var dismiss
+    @State private var isCustomMinutesPresented = false
+    @State private var customMinutesText = ""
+    @FocusState private var isCustomMinutesFocused: Bool
+
+    private let contentWidth: CGFloat = 320
+    private let contentHeight: CGFloat = 258
+    private let contentPadding: CGFloat = 12
+    private let settingControlWidth: CGFloat = 190
+
     private let presets = [
-        ("30M", 30),
-        ("1H", 60),
-        ("1.5H", 90),
-        ("2H", 120)
+        ("30m", 30),
+        ("60m", 60),
+        ("90m", 90),
+        ("120m", 120)
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("TimeO")
-                        .font(.headline)
-                    Text(statusText)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Spacer()
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Image(systemName: "power")
-                }
-                .buttonStyle(.borderless)
-                .help("Quit TimeO")
-            }
+        timerContent
+        .padding(contentPadding)
+        .frame(
+            width: contentWidth + contentPadding * 2,
+            height: contentHeight + contentPadding * 2,
+            alignment: .top
+        )
+    }
 
-            Stepper(value: $selectedMinutes, in: 1...1_440, step: 1) {
-                HStack {
-                    Text("Minutes")
-                    Spacer()
-                    TextField("Minutes", value: $selectedMinutes, format: .number)
-                        .multilineTextAlignment(.trailing)
-                        .monospacedDigit()
-                        .frame(width: 72)
-                        .textFieldStyle(.roundedBorder)
-                }
-            }
+    @ViewBuilder
+    private var timerContent: some View {
+        VStack(spacing: 10) {
+            header
 
-            HStack(spacing: 8) {
-                ForEach(presets, id: \.1) { preset in
-                    Button(preset.0) {
-                        selectedMinutes = preset.1
-                        model.start(minutes: preset.1)
-                    }
-                    .controlSize(.small)
-                }
+            if model.isRunning {
+                runningControls
+            } else {
+                presetControls
             }
-
-            Picker("Appearance", selection: $model.appearanceMode) {
-                ForEach(OverlayAppearanceMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Picker("Style", selection: $model.displayStyle) {
-                ForEach(TimerDisplayStyle.allCases) { style in
-                    Text(style.rawValue).tag(style)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Picker("Position", selection: $model.overlayPosition) {
-                ForEach(OverlayPosition.allCases) { position in
-                    Text(position.rawValue).tag(position)
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    if model.isRunning {
-                        model.togglePause()
-                    } else {
-                        model.start(minutes: selectedMinutes)
-                    }
-                } label: {
-                    Label(primaryActionTitle, systemImage: primaryActionIcon)
-                        .frame(maxWidth: .infinity)
-                }
-                .keyboardShortcut(.defaultAction)
-
-                Button(role: .destructive) {
-                    model.stop()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(!model.isRunning)
-            }
-            .buttonStyle(.borderedProminent)
 
             Divider()
 
+            settingRow(title: "Mood") {
+                Picker("Mood", selection: $model.appearanceMode) {
+                    ForEach(OverlayAppearanceMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.regular)
+            }
+
+            settingRow(title: "Position") {
+                Picker("Position", selection: $model.overlayPosition) {
+                    ForEach(OverlayPosition.allCases) { position in
+                        Text(position.rawValue).tag(position)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.regular)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            Text("TimeO")
+                .font(.headline)
+
+            Spacer()
+
+            iconButton(systemName: "power") {
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    private var presetControls: some View {
+        VStack(spacing: 8) {
+            ForEach(0..<2, id: \.self) { row in
+                HStack(spacing: 8) {
+                    ForEach(presets[(row * 2)..<(row * 2 + 2)], id: \.1) { preset in
+                        menuButton(maxWidth: .infinity) {
+                            Text(preset.0)
+                        } action: {
+                            startTimer(minutes: preset.1)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+
+            if isCustomMinutesPresented {
+                TextField("", text: $customMinutesText)
+                    .multilineTextAlignment(.center)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                    .focused($isCustomMinutesFocused)
+                    .onSubmit(startCustomMinutes)
+                    .onChange(of: customMinutesText) { value in
+                        customMinutesText = value.filter(\.isNumber)
+                    }
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            isCustomMinutesFocused = true
+                        }
+                    }
+            } else {
+                menuButton(maxWidth: .infinity) {
+                    Image(systemName: "plus")
+                } action: {
+                    customMinutesText = ""
+                    isCustomMinutesPresented = true
+                }
+            }
+        }
+        .frame(width: contentWidth)
+    }
+
+    private var runningControls: some View {
+        HStack(spacing: 8) {
             Button {
-                onTogglePathDemo()
+                model.togglePause()
             } label: {
-                Label("Test Time's Up", systemImage: "textformat.alt")
+                Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
                     .frame(maxWidth: .infinity)
             }
-            .controlSize(.small)
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .frame(maxWidth: .infinity)
+
+            menuButton(maxWidth: .infinity) {
+                Image(systemName: "stop.fill")
+            } action: {
+                model.stop()
+            }
+            .frame(maxWidth: .infinity)
         }
-        .padding(18)
-        .frame(width: 330)
+        .frame(width: contentWidth)
     }
 
-    private var statusText: String {
-        if model.isPaused {
-            return "Paused at \(model.formattedRemaining)"
+    private func settingRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            Text(title)
+                .font(.body)
+                .frame(width: 86, alignment: .leading)
+
+            Spacer(minLength: 16)
+
+            content()
+                .frame(width: settingControlWidth, alignment: .trailing)
         }
-        if model.isRunning {
-            return model.formattedRemaining
-        }
-        if model.isFinished {
-            return "Time's Up"
-        }
-        return "Set a timer overlay"
+        .frame(width: contentWidth)
     }
 
-    private var primaryActionTitle: String {
-        if model.isPaused {
-            return "Resume"
+    private func menuButton<Content: View>(
+        maxWidth: CGFloat? = nil,
+        @ViewBuilder content: () -> Content,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            content()
+                .frame(maxWidth: maxWidth)
         }
-        return model.isRunning ? "Pause" : "Start"
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
-    private var primaryActionIcon: String {
-        if model.isPaused {
-            return "play.fill"
+    private func iconButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
         }
-        return model.isRunning ? "pause.fill" : "play.fill"
+        .buttonStyle(.borderless)
+    }
+
+    private func startCustomMinutes() {
+        guard let minutes = Int(customMinutesText), minutes > 0 else {
+            return
+        }
+        let clampedMinutes = min(minutes, 1_440)
+        isCustomMinutesPresented = false
+        startTimer(minutes: clampedMinutes)
+    }
+
+    private func startTimer(minutes: Int) {
+        selectedMinutes = minutes
+        model.start(minutes: minutes)
+        dismiss()
     }
 }
 
@@ -375,7 +431,7 @@ final class OverlayController {
             }
             .store(in: &cancellables)
 
-        model.$displayStyle
+        model.$remainingSeconds
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateWindowPositions()
@@ -447,7 +503,7 @@ final class OverlayWindow: NSPanel {
         let frame = OverlayWindow.overlayFrame(
             for: screen,
             position: model.overlayPosition,
-            displayStyle: model.displayStyle
+            text: model.formattedRemaining
         )
         super.init(
             contentRect: frame,
@@ -485,7 +541,7 @@ final class OverlayWindow: NSPanel {
         let frame = OverlayWindow.overlayFrame(
             for: overlayScreen,
             position: model.overlayPosition,
-            displayStyle: model.displayStyle
+            text: model.formattedRemaining
         )
 
         if animated {
@@ -503,7 +559,7 @@ final class OverlayWindow: NSPanel {
         OverlayWindow.overlayFrame(
             for: overlayScreen,
             position: model.overlayPosition,
-            displayStyle: model.displayStyle
+            text: model.formattedRemaining
         )
         .contains(point)
     }
@@ -511,13 +567,21 @@ final class OverlayWindow: NSPanel {
     private static func overlayFrame(
         for screen: NSScreen,
         position: OverlayPosition,
-        displayStyle: TimerDisplayStyle
+        text: String
     ) -> NSRect {
         let visibleFrame = screen.visibleFrame
-        let targetWidth: CGFloat = 240
-        let targetHeight: CGFloat = 76
+        let isCornerPosition: Bool
+        switch position {
+        case .topLeading, .topTrailing, .bottomLeading, .bottomTrailing:
+            isCornerPosition = true
+        case .topCenter, .bottomCenter:
+            isCornerPosition = false
+        }
+
+        let targetWidth: CGFloat = isCornerPosition ? 220 : centerOverlayWidth(for: text)
+        let targetHeight: CGFloat = isCornerPosition ? 220 : 76
         let width: CGFloat = min(targetWidth, visibleFrame.width - 48)
-        let height: CGFloat = targetHeight
+        let height: CGFloat = min(targetHeight, visibleFrame.height - 48)
         let inset: CGFloat = 4
 
         let x: CGFloat
@@ -540,6 +604,12 @@ final class OverlayWindow: NSPanel {
 
         return NSRect(x: x, y: y, width: width, height: height)
     }
+
+    private static func centerOverlayWidth(for text: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        return max(240, textWidth + 48)
+    }
 }
 
 struct TimerOverlayView: View {
@@ -549,23 +619,12 @@ struct TimerOverlayView: View {
     var body: some View {
         ZStack {
             if model.isRunning {
-                Group {
-                    switch model.displayStyle {
-                    case .normal:
-                        NormalTimerText(
-                            text: model.formattedRemaining,
-                            progress: model.remainingProgress,
-                            appearanceMode: model.appearanceMode,
-                            isHovered: model.isOverlayHovered
-                        )
-                    case .flapClock:
-                        FlipFlapTimerText(
-                            text: model.formattedRemaining,
-                            appearanceMode: model.appearanceMode,
-                            isHovered: model.isOverlayHovered
-                        )
-                    }
-                }
+                NormalTimerText(
+                    text: model.formattedRemaining,
+                    appearanceMode: model.appearanceMode,
+                    overlayPosition: model.overlayPosition,
+                    isHovered: model.isOverlayHovered
+                )
                 .opacity(overlayOpacity)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
@@ -576,9 +635,6 @@ struct TimerOverlayView: View {
             updateHiddenOffset(isHovered: isHovered)
         }
         .onChange(of: model.overlayPosition) { _ in
-            updateHiddenOffset(isHovered: model.isOverlayHovered, animated: false)
-        }
-        .onChange(of: model.displayStyle) { _ in
             updateHiddenOffset(isHovered: model.isOverlayHovered, animated: false)
         }
         .allowsHitTesting(model.isRunning)
@@ -1136,8 +1192,8 @@ struct FlapClockBackground<ContainerShape: InsettableShape>: View {
 
 struct NormalTimerText: View {
     let text: String
-    let progress: Double
     let appearanceMode: OverlayAppearanceMode
+    let overlayPosition: OverlayPosition
     let isHovered: Bool
 
     @Environment(\.colorScheme) private var colorScheme
@@ -1160,77 +1216,315 @@ struct NormalTimerText: View {
 
     var body: some View {
         TimerSurface(isHovered: isHovered) { _ in
-            HStack(spacing: 10) {
-                GlassProgressRing(
-                    progress: progress,
-                    size: 30,
-                    color: textColor
-                )
-
-                Text(text)
-                    .font(.system(size: 40, weight: .semibold, design: .default))
-                    .monospacedDigit()
-                    .foregroundStyle(textColor)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: true)
-                    .frame(height: 48)
-                    .offset(y: -1)
+            Group {
+                if isCornerPosition {
+                    cornerBody
+                } else {
+                    centerBody
+                }
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 20)
-            .padding(.vertical, 10)
-            .frame(minWidth: 196)
         } background: { _ in
-            FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
+            Group {
+                if isCornerPosition {
+                    TimerCornerBackground(
+                        isDark: resolvedIsDark,
+                        position: overlayPosition,
+                        contentLength: cornerSegmentLength
+                    )
+                } else {
+                    FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
+                }
+            }
         }
-        .frame(height: 68)
+        .frame(width: isCornerPosition ? 220 : nil, height: isCornerPosition ? 220 : 68)
         .flipsForRightToLeftLayoutDirection(false)
         .environment(\.layoutDirection, .leftToRight)
     }
+
+    private var isCornerPosition: Bool {
+        switch overlayPosition {
+        case .topLeading, .topTrailing, .bottomLeading, .bottomTrailing:
+            true
+        case .topCenter, .bottomCenter:
+            false
+        }
+    }
+
+    private var centerBody: some View {
+        timerText
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .frame(minWidth: 168)
+    }
+
+    private var cornerBody: some View {
+        GeometryReader { geometry in
+            let path = TimerCornerPath(position: overlayPosition, rect: CGRect(origin: .zero, size: geometry.size))
+            let layout = cornerGlyphLayout()
+            let start = path.cornerDistance - layout.total / 2
+
+            ZStack {
+                ForEach(layout.glyphs) { item in
+                    let placement = path.locate(start + item.center)
+                    Text(String(item.character))
+                        .font(.system(size: 40, weight: .semibold, design: .default))
+                        .monospacedDigit()
+                        .foregroundStyle(textColor)
+                        .fixedSize()
+                        .rotationEffect(.radians(Double(readableCornerAngle(placement.angle))))
+                        .position(placement.point)
+                }
+            }
+        }
+    }
+
+    private func readableCornerAngle(_ angle: CGFloat) -> CGFloat {
+        overlayPosition == .topLeading ? angle + .pi : angle
+    }
+
+    private var cornerSegmentLength: CGFloat {
+        max(72, cornerGlyphLayout().total - 16)
+    }
+
+    private var timerText: some View {
+        Text(text)
+            .font(.system(size: 40, weight: .semibold, design: .default))
+            .monospacedDigit()
+            .foregroundStyle(textColor)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: true)
+            .frame(height: 48)
+            .offset(y: -1)
+    }
+
+    private func cornerGlyphLayout() -> CornerTimerGlyphLayout {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
+        var cursor: CGFloat = 0
+        let glyphs = text.enumerated().map { index, character in
+            let advance = (String(character) as NSString).size(withAttributes: [.font: font]).width
+            defer { cursor += advance }
+            return CornerTimerGlyph(id: index, character: character, center: cursor + advance / 2)
+        }
+        return CornerTimerGlyphLayout(glyphs: glyphs, total: cursor)
+    }
 }
 
-struct GlassProgressRing: View {
-    let progress: Double
-    let size: CGFloat
-    let color: Color
+private struct CornerTimerGlyph: Identifiable {
+    let id: Int
+    let character: Character
+    let center: CGFloat
+}
 
-    private let lineWidth: CGFloat = 5
+private struct CornerTimerGlyphLayout {
+    let glyphs: [CornerTimerGlyph]
+    let total: CGFloat
+}
 
-    private var clampedProgress: Double {
-        max(0, min(1, progress))
-    }
+struct TimerCornerBackground: View {
+    let isDark: Bool
+    let position: OverlayPosition
+    let contentLength: CGFloat
 
-    private var progressColor: Color {
-        color
-    }
-
-    private var trackColor: Color {
-        color.opacity(0.4)
+    private var shape: TimerCornerShape {
+        TimerCornerShape(position: position, contentLength: contentLength)
     }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(
-                    trackColor,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
+        shape
+            .fill(.clear)
+            .background {
+                VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                    .clipShape(shape)
+            }
+            .overlay {
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: isDark
+                                ? [
+                                    Color.black.opacity(0.20),
+                                    Color.black.opacity(0.26)
+                                ]
+                                : [
+                                    Color.white.opacity(0.46),
+                                    Color.white.opacity(0.40)
+                                ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .overlay {
+                shape
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.04),
+                                .white.opacity(0.02)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+            }
+    }
+}
 
-            Circle()
-                .inset(by: lineWidth / 2)
-                .trim(from: 0, to: clampedProgress)
-                .stroke(
-                    progressColor,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+struct TimerCornerShape: Shape {
+    let position: OverlayPosition
+    let contentLength: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        TimerCornerPath(position: position, rect: rect)
+            .segmentPath(length: contentLength)
+            .strokedPath(
+                StrokeStyle(
+                    lineWidth: TimerCornerPath.lineWidth,
+                    lineCap: .round,
+                    lineJoin: .round
                 )
-                .rotationEffect(.degrees(-90))
+            )
+    }
+}
+
+private struct TimerCornerPath {
+    static let lineWidth: CGFloat = 60
+
+    let position: OverlayPosition
+    let rect: CGRect
+
+    private var inset: CGFloat { Self.lineWidth / 2 }
+    private var bendRadius: CGFloat { 80 }
+    private var minX: CGFloat { rect.minX + inset }
+    private var maxX: CGFloat { rect.maxX - inset }
+    private var minY: CGFloat { rect.minY + inset }
+    private var maxY: CGFloat { rect.maxY - inset }
+    private var lineA: CGFloat { max(0, maxX - minX - bendRadius) }
+    private var lineB: CGFloat { max(0, maxY - minY - bendRadius) }
+    private var arcLength: CGFloat { bendRadius * .pi / 2 }
+    private var total: CGFloat { max(1, lineA + arcLength + lineB) }
+    var cornerDistance: CGFloat { lineA + arcLength / 2 }
+
+    func segmentPath(length: CGFloat) -> Path {
+        let start = max(0, cornerDistance - length / 2)
+        let end = min(total, cornerDistance + length / 2)
+        let segmentLength = max(0, end - start)
+        let steps = max(2, Int(segmentLength / 5))
+
+        var path = Path()
+        for index in 0...steps {
+            let distance = start + segmentLength * CGFloat(index) / CGFloat(steps)
+            let point = locate(distance).point
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
         }
-        .frame(width: size, height: size)
-        .alignmentGuide(.firstTextBaseline) { dimensions in
-            dimensions[VerticalAlignment.center]
+        return path
+    }
+
+    func path() -> Path {
+        var path = Path()
+        switch position {
+        case .topTrailing:
+            path.move(to: CGPoint(x: minX, y: minY))
+            path.addLine(to: CGPoint(x: maxX - bendRadius, y: minY))
+            path.addArc(center: CGPoint(x: maxX - bendRadius, y: minY + bendRadius), radius: bendRadius, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+            path.addLine(to: CGPoint(x: maxX, y: maxY))
+        case .topLeading:
+            path.move(to: CGPoint(x: maxX, y: minY))
+            path.addLine(to: CGPoint(x: minX + bendRadius, y: minY))
+            path.addArc(center: CGPoint(x: minX + bendRadius, y: minY + bendRadius), radius: bendRadius, startAngle: .degrees(-90), endAngle: .degrees(-180), clockwise: true)
+            path.addLine(to: CGPoint(x: minX, y: maxY))
+        case .bottomTrailing:
+            path.move(to: CGPoint(x: minX, y: maxY))
+            path.addLine(to: CGPoint(x: maxX - bendRadius, y: maxY))
+            path.addArc(center: CGPoint(x: maxX - bendRadius, y: maxY - bendRadius), radius: bendRadius, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
+            path.addLine(to: CGPoint(x: maxX, y: minY))
+        case .bottomLeading:
+            path.move(to: CGPoint(x: maxX, y: maxY))
+            path.addLine(to: CGPoint(x: minX + bendRadius, y: maxY))
+            path.addArc(center: CGPoint(x: minX + bendRadius, y: maxY - bendRadius), radius: bendRadius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+            path.addLine(to: CGPoint(x: minX, y: minY))
+        case .topCenter, .bottomCenter:
+            path.move(to: CGPoint(x: minX, y: rect.midY))
+            path.addLine(to: CGPoint(x: maxX, y: rect.midY))
         }
-        .animation(.easeOut(duration: 0.18), value: clampedProgress)
-        .accessibilityHidden(true)
+        return path
+    }
+
+    func locate(_ rawDistance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        let distance = min(max(0, rawDistance), total)
+
+        if distance <= lineA {
+            return locateOnFirstLine(distance)
+        }
+        if distance <= lineA + arcLength {
+            return locateOnArc(distance - lineA)
+        }
+        return locateOnSecondLine(distance - lineA - arcLength)
+    }
+
+    private func locateOnFirstLine(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        switch position {
+        case .topTrailing:
+            return (CGPoint(x: minX + distance, y: minY), 0)
+        case .topLeading:
+            return (CGPoint(x: maxX - distance, y: minY), .pi)
+        case .bottomTrailing:
+            return (CGPoint(x: minX + distance, y: maxY), 0)
+        case .bottomLeading:
+            return (CGPoint(x: maxX - distance, y: maxY), .pi)
+        case .topCenter, .bottomCenter:
+            return (CGPoint(x: minX + distance, y: rect.midY), 0)
+        }
+    }
+
+    private func locateOnArc(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        let progress = distance / bendRadius
+        switch position {
+        case .topTrailing:
+            let angle = -.pi / 2 + progress
+            return arcPlacement(center: CGPoint(x: maxX - bendRadius, y: minY + bendRadius), angle: angle, tangent: angle + .pi / 2)
+        case .topLeading:
+            let angle = -.pi / 2 - progress
+            return arcPlacement(center: CGPoint(x: minX + bendRadius, y: minY + bendRadius), angle: angle, tangent: angle - .pi / 2)
+        case .bottomTrailing:
+            let angle = .pi / 2 - progress
+            return arcPlacement(center: CGPoint(x: maxX - bendRadius, y: maxY - bendRadius), angle: angle, tangent: angle - .pi / 2)
+        case .bottomLeading:
+            let angle = .pi / 2 + progress
+            return arcPlacement(center: CGPoint(x: minX + bendRadius, y: maxY - bendRadius), angle: angle, tangent: angle + .pi / 2)
+        case .topCenter, .bottomCenter:
+            return locateOnFirstLine(distance)
+        }
+    }
+
+    private func locateOnSecondLine(_ distance: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        switch position {
+        case .topTrailing:
+            return (CGPoint(x: maxX, y: minY + bendRadius + distance), .pi / 2)
+        case .topLeading:
+            return (CGPoint(x: minX, y: minY + bendRadius + distance), -.pi / 2)
+        case .bottomTrailing:
+            return (CGPoint(x: maxX, y: maxY - bendRadius - distance), -.pi / 2)
+        case .bottomLeading:
+            return (CGPoint(x: minX, y: maxY - bendRadius - distance), .pi / 2)
+        case .topCenter, .bottomCenter:
+            return locateOnFirstLine(distance)
+        }
+    }
+
+    private func arcPlacement(center: CGPoint, angle: CGFloat, tangent: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        (
+            CGPoint(
+                x: center.x + bendRadius * cos(angle),
+                y: center.y + bendRadius * sin(angle)
+            ),
+            tangent
+        )
     }
 }
 
