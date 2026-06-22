@@ -233,9 +233,8 @@ struct TimerMenuBarWindow: View {
     @FocusState private var isCustomMinutesFocused: Bool
 
     private let contentWidth: CGFloat = 320
-    private let contentHeight: CGFloat = 212
+    private let contentHeight: CGFloat = 336
     private let contentPadding: CGFloat = 12
-    private let settingControlWidth: CGFloat = 190
 
     private let presets = [
         ("30m", 30),
@@ -267,16 +266,7 @@ struct TimerMenuBarWindow: View {
 
             Divider()
 
-            settingRow(title: "Position") {
-                Picker("Position", selection: $model.overlayPosition) {
-                    ForEach(OverlayPosition.allCases) { position in
-                        Text(position.rawValue).tag(position)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.regular)
-            }
+            positionBoard
         }
     }
 
@@ -362,18 +352,65 @@ struct TimerMenuBarWindow: View {
         .frame(width: contentWidth)
     }
 
-    private func settingRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Text(title)
-                .font(.body)
-                .frame(width: 86, alignment: .leading)
+    private var positionBoard: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.025))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
 
-            Spacer(minLength: 16)
-
-            content()
-                .frame(width: settingControlWidth, alignment: .trailing)
+            VStack(spacing: 28) {
+                positionButtonRow([.topLeading, .topCenter, .topTrailing])
+                positionButtonRow([.middleLeading, nil, .middleTrailing], centerContent: {
+                    Text("Position")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                })
+                positionButtonRow([.bottomLeading, .bottomCenter, .bottomTrailing])
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
         }
-        .frame(width: contentWidth)
+        .frame(width: contentWidth, height: 210)
+    }
+
+    private func positionButtonRow(
+        _ positions: [OverlayPosition?],
+        @ViewBuilder centerContent: () -> some View = { EmptyView() }
+    ) -> some View {
+        HStack {
+            positionNodeButton(for: positions[0])
+            Spacer()
+            if let middlePosition = positions[1] {
+                positionNodeButton(for: middlePosition)
+            } else {
+                centerContent()
+            }
+            Spacer()
+            positionNodeButton(for: positions[2])
+        }
+    }
+
+    @ViewBuilder
+    private func positionNodeButton(for position: OverlayPosition?) -> some View {
+        if let position {
+            Button {
+                model.overlayPosition = position
+            } label: {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(positionNodeFill(for: position))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(positionNodeStroke(for: position), lineWidth: position == model.overlayPosition ? 2 : 1)
+                    }
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .help(position.rawValue)
+        } else {
+            Color.clear
+                .frame(width: 38, height: 38)
+        }
     }
 
     private func menuButton<Content: View>(
@@ -413,6 +450,14 @@ struct TimerMenuBarWindow: View {
 
     private func toggleAppearanceMode() {
         model.appearanceMode = resolvedIsDark ? .light : .dark
+    }
+
+    private func positionNodeFill(for position: OverlayPosition) -> Color {
+        position == model.overlayPosition ? Color.white.opacity(0.7) : Color.white.opacity(0.03)
+    }
+
+    private func positionNodeStroke(for position: OverlayPosition) -> Color {
+        position == model.overlayPosition ? Color.white.opacity(0.95) : Color.white.opacity(0.18)
     }
 
     private func startCustomMinutes() {
