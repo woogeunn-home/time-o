@@ -675,7 +675,7 @@ final class OverlayWindow: NSPanel {
     private static func centerOverlayWidth(for text: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(168, textWidth + 32)
+        return max(144, textWidth + 8)
     }
 }
 
@@ -1286,7 +1286,7 @@ struct NormalTimerText: View {
     var body: some View {
         TimerSurface(isHovered: isHovered) { _ in
             timerText
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 4)
                 .padding(.vertical, 4)
                 .frame(width: capsuleWidth, height: capsuleHeight)
         } background: { _ in
@@ -1314,7 +1314,7 @@ struct NormalTimerText: View {
     private var capsuleWidth: CGFloat {
         let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(168, textWidth + 32)
+        return max(144, textWidth + 8)
     }
 
     private var capsuleHeight: CGFloat {
