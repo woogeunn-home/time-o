@@ -375,11 +375,11 @@ struct TimerMenuBarWindow: View {
                 Text(model.formattedRemaining)
                     .font(.system(size: 18, weight: .semibold, design: .default))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(popoverPrimaryTextColor)
 
                 Text(model.formattedEndTime)
                     .font(.system(size: 18, weight: .medium, design: .default))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(popoverSecondaryTextColor)
             }
             .frame(maxWidth: .infinity)
             .multilineTextAlignment(.center)
@@ -414,16 +414,16 @@ struct TimerMenuBarWindow: View {
     private var positionBoard: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(positionBoardFillColor)
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(positionBoardStrokeColor, lineWidth: 1)
 
             VStack(spacing: 16) {
                 positionButtonRow([.topLeading, .topCenter, .topTrailing])
                 positionButtonRow([.middleLeading, nil, .middleTrailing], centerContent: {
                     Text("Position")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(popoverSecondaryTextColor)
                 })
                 positionButtonRow([.bottomLeading, .bottomCenter, .bottomTrailing])
             }
@@ -518,12 +518,36 @@ struct TimerMenuBarWindow: View {
         model.appearanceMode = resolvedIsDark ? .light : .dark
     }
 
+    private var popoverPrimaryTextColor: Color {
+        resolvedIsDark ? .white : Color(red: 0.10, green: 0.10, blue: 0.11)
+    }
+
+    private var popoverSecondaryTextColor: Color {
+        resolvedIsDark ? .white.opacity(0.66) : .black.opacity(0.58)
+    }
+
+    private var positionBoardFillColor: Color {
+        resolvedIsDark ? .white.opacity(0.025) : .black.opacity(0.025)
+    }
+
+    private var positionBoardStrokeColor: Color {
+        resolvedIsDark ? .white.opacity(0.12) : .black.opacity(0.11)
+    }
+
     private func positionNodeFill(for position: OverlayPosition) -> Color {
-        position == model.overlayPosition ? Color.white.opacity(0.7) : Color.white.opacity(0.03)
+        if position == model.overlayPosition {
+            return resolvedIsDark ? .white.opacity(0.7) : .black.opacity(0.72)
+        }
+
+        return resolvedIsDark ? .white.opacity(0.03) : .black.opacity(0.04)
     }
 
     private func positionNodeStroke(for position: OverlayPosition) -> Color {
-        position == model.overlayPosition ? Color.white.opacity(0.95) : Color.white.opacity(0.18)
+        if position == model.overlayPosition {
+            return resolvedIsDark ? .white.opacity(0.95) : .black.opacity(0.80)
+        }
+
+        return resolvedIsDark ? .white.opacity(0.18) : .black.opacity(0.18)
     }
 
     private var popoverContentHeight: CGFloat {
