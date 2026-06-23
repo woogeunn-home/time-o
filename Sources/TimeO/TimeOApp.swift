@@ -319,10 +319,10 @@ struct TimerMenuBarWindow: View {
     private let positionBoardWidth: CGFloat = 224
 
     private let presets = [
-        ("30m", 30),
-        ("60m", 60),
-        ("90m", 90),
-        ("120m", 120)
+        ("30 Minutes", 30),
+        ("1 Hour", 60),
+        ("1.5 Hours", 90),
+        ("2 Hours", 120)
     ]
 
     var body: some View {
