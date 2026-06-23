@@ -17,5 +17,6 @@ cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 cp "$ROOT_DIR/.build/$CONFIGURATION/TimeO" "$MACOS_DIR/TimeO"
 chmod +x "$MACOS_DIR/TimeO"
+codesign --force --deep --sign - "$APP_DIR"
 
 echo "$APP_DIR"

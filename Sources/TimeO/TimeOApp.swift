@@ -268,6 +268,7 @@ struct TimerMenuBarWindow: View {
 
     private let contentWidth: CGFloat = 320
     private let contentPadding: CGFloat = 12
+    private let controlsTopInset: CGFloat = 10
     private let positionBoardWidth: CGFloat = 224
 
     private let presets = [
@@ -292,11 +293,14 @@ struct TimerMenuBarWindow: View {
         VStack(spacing: 8) {
             header
 
-            if model.isRunning {
-                runningControls
-            } else {
-                presetControls
+            Group {
+                if model.isRunning {
+                    runningControls
+                } else {
+                    presetControls
+                }
             }
+            .padding(.top, controlsTopInset)
 
             Spacer(minLength: 0)
             makerBadge
@@ -519,10 +523,10 @@ struct TimerMenuBarWindow: View {
     }
 
     private var themeToggleIconName: String {
-        resolvedIsDark ? "moon" : "sun.max"
+        resolvedOverlayIsDark ? "moon" : "sun.max"
     }
 
-    private var resolvedIsDark: Bool {
+    private var resolvedOverlayIsDark: Bool {
         switch model.appearanceMode {
         case .automatic:
             colorScheme == .dark
@@ -534,43 +538,47 @@ struct TimerMenuBarWindow: View {
     }
 
     private func toggleAppearanceMode() {
-        model.appearanceMode = resolvedIsDark ? .light : .dark
+        model.appearanceMode = resolvedOverlayIsDark ? .light : .dark
+    }
+
+    private var resolvedPopoverIsDark: Bool {
+        colorScheme == .dark
     }
 
     private var popoverPrimaryTextColor: Color {
-        resolvedIsDark ? .white : Color(red: 0.10, green: 0.10, blue: 0.11)
+        resolvedPopoverIsDark ? .white : Color(red: 0.10, green: 0.10, blue: 0.11)
     }
 
     private var popoverSecondaryTextColor: Color {
-        resolvedIsDark ? .white.opacity(0.66) : .black.opacity(0.58)
+        resolvedPopoverIsDark ? .white.opacity(0.66) : .black.opacity(0.58)
     }
 
     private var makerBadgeColor: Color {
-        resolvedIsDark ? .white.opacity(0.42) : .black.opacity(0.38)
+        resolvedPopoverIsDark ? .white.opacity(0.42) : .black.opacity(0.38)
     }
 
     private var positionBoardFillColor: Color {
-        resolvedIsDark ? .white.opacity(0.025) : .black.opacity(0.025)
+        resolvedPopoverIsDark ? .white.opacity(0.025) : .black.opacity(0.025)
     }
 
     private var positionBoardStrokeColor: Color {
-        resolvedIsDark ? .white.opacity(0.12) : .black.opacity(0.11)
+        resolvedPopoverIsDark ? .white.opacity(0.12) : .black.opacity(0.11)
     }
 
     private func positionNodeFill(for position: OverlayPosition) -> Color {
         if position == model.overlayPosition {
-            return resolvedIsDark ? .white.opacity(0.7) : .black.opacity(0.72)
+            return resolvedPopoverIsDark ? .white.opacity(0.7) : .black.opacity(0.72)
         }
 
-        return resolvedIsDark ? .white.opacity(0.03) : .black.opacity(0.04)
+        return resolvedPopoverIsDark ? .white.opacity(0.03) : .black.opacity(0.04)
     }
 
     private func positionNodeStroke(for position: OverlayPosition) -> Color {
         if position == model.overlayPosition {
-            return resolvedIsDark ? .white.opacity(0.95) : .black.opacity(0.80)
+            return resolvedPopoverIsDark ? .white.opacity(0.95) : .black.opacity(0.80)
         }
 
-        return resolvedIsDark ? .white.opacity(0.18) : .black.opacity(0.18)
+        return resolvedPopoverIsDark ? .white.opacity(0.18) : .black.opacity(0.18)
     }
 
     private var popoverContentHeight: CGFloat {
