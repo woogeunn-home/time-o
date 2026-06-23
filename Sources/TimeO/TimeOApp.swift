@@ -289,7 +289,7 @@ struct TimerMenuBarWindow: View {
 
     @ViewBuilder
     private var timerContent: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             header
 
             if model.isRunning {
@@ -297,7 +297,11 @@ struct TimerMenuBarWindow: View {
             } else {
                 presetControls
             }
+
+            Spacer(minLength: 0)
+            makerBadge
         }
+        .frame(width: contentWidth, height: popoverContentHeight, alignment: .top)
     }
 
     private var header: some View {
@@ -325,7 +329,7 @@ struct TimerMenuBarWindow: View {
     }
 
     private var presetControls: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             ForEach(0..<2, id: \.self) { row in
                 HStack(spacing: 8) {
                     ForEach(presets[(row * 2)..<(row * 2 + 2)], id: \.1) { preset in
@@ -418,17 +422,20 @@ struct TimerMenuBarWindow: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(positionBoardStrokeColor, lineWidth: 1)
 
-            VStack(spacing: 16) {
+            VStack(spacing: 0) {
                 positionButtonRow([.topLeading, .topCenter, .topTrailing])
+                Spacer()
                 positionButtonRow([.middleLeading, nil, .middleTrailing], centerContent: {
                     Text("Position")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(popoverSecondaryTextColor)
                 })
+                Spacer()
                 positionButtonRow([.bottomLeading, .bottomCenter, .bottomTrailing])
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: positionBoardWidth, height: 140)
     }
@@ -437,6 +444,18 @@ struct TimerMenuBarWindow: View {
         positionBoard
             .padding(12)
             .frame(width: 248, height: 164)
+    }
+
+    private var makerBadge: some View {
+        Text("MADE BY W")
+            .font(.system(size: 7, weight: .medium))
+            .foregroundStyle(makerBadgeColor)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background {
+                Capsule()
+                    .stroke(makerBadgeColor.opacity(0.75), lineWidth: 0.5)
+            }
     }
 
     private func positionButtonRow(
@@ -524,6 +543,10 @@ struct TimerMenuBarWindow: View {
 
     private var popoverSecondaryTextColor: Color {
         resolvedIsDark ? .white.opacity(0.66) : .black.opacity(0.58)
+    }
+
+    private var makerBadgeColor: Color {
+        resolvedIsDark ? .white.opacity(0.42) : .black.opacity(0.38)
     }
 
     private var positionBoardFillColor: Color {
