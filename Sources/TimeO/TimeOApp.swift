@@ -862,7 +862,8 @@ struct TimerOverlayView: View {
                     text: model.formattedRemaining,
                     appearanceMode: model.appearanceMode,
                     overlayPosition: model.overlayPosition,
-                    isHovered: model.isOverlayHovered
+                    isHovered: model.isOverlayHovered,
+                    isWarning: model.remainingSeconds <= 10
                 )
                 .opacity(overlayOpacity)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -1388,6 +1389,7 @@ struct FlipFlapFoldShadowOverlay: View {
 struct FlapClockBackground<ContainerShape: InsettableShape>: View {
     let isDark: Bool
     let shape: ContainerShape
+    var isWarning = false
 
     var body: some View {
         shape
@@ -1400,15 +1402,7 @@ struct FlapClockBackground<ContainerShape: InsettableShape>: View {
                 shape
                     .fill(
                         LinearGradient(
-                            colors: isDark
-                                ? [
-                                    Color.black.opacity(0.20),
-                                    Color.black.opacity(0.26)
-                                ]
-                                : [
-                                    Color.white.opacity(0.46),
-                                    Color.white.opacity(0.40)
-                                ],
+                            colors: fillColors,
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -1429,6 +1423,25 @@ struct FlapClockBackground<ContainerShape: InsettableShape>: View {
                     )
             }
     }
+
+    private var fillColors: [Color] {
+        if isWarning {
+            return [
+                Color(red: 1.0, green: 0.80, blue: 0.18),
+                Color(red: 0.95, green: 0.63, blue: 0.08)
+            ]
+        }
+
+        return isDark
+            ? [
+                Color.black.opacity(0.20),
+                Color.black.opacity(0.26)
+            ]
+            : [
+                Color.white.opacity(0.46),
+                Color.white.opacity(0.40)
+            ]
+    }
 }
 
 struct NormalTimerText: View {
@@ -1436,12 +1449,17 @@ struct NormalTimerText: View {
     let appearanceMode: OverlayAppearanceMode
     let overlayPosition: OverlayPosition
     let isHovered: Bool
+    let isWarning: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
     /// #ddd in dark, #222 in light.
     private var textColor: Color {
-        resolvedIsDark ? Color(white: 0.867) : Color(white: 0.133)
+        if isWarning {
+            return Color(red: 0.18, green: 0.11, blue: 0.02)
+        }
+
+        return resolvedIsDark ? Color(white: 0.867) : Color(white: 0.133)
     }
 
     private var resolvedIsDark: Bool {
@@ -1462,7 +1480,11 @@ struct NormalTimerText: View {
                 .padding(.vertical, 4)
                 .frame(width: capsuleWidth, height: capsuleHeight)
         } background: { _ in
-            FlapClockBackground(isDark: resolvedIsDark, shape: Capsule(style: .continuous))
+            FlapClockBackground(
+                isDark: resolvedIsDark,
+                shape: Capsule(style: .continuous),
+                isWarning: isWarning
+            )
         }
         .frame(width: capsuleWidth, height: capsuleHeight)
         .rotationEffect(.degrees(isVerticalPosition ? 90 : 0))
