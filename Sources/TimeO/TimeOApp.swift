@@ -8,15 +8,62 @@ struct TimeOApp: App {
     @State private var selectedMinutes = 30
 
     var body: some Scene {
-        MenuBarExtra("TimeO", systemImage: "timer.circle.fill") {
+        MenuBarExtra {
             TimerMenuBarWindow(
                 model: appState.model,
                 selectedMinutes: $selectedMinutes,
                 onTogglePathDemo: { appState.toggleTimesUp() }
             )
+        } label: {
+            MenuBarLogo()
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+struct MenuBarLogo: View {
+    var body: some View {
+        Image(nsImage: Self.image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: Self.size.width, height: Self.size.height)
+            .accessibilityLabel("Time-O")
+    }
+
+    private static let size = CGSize(width: 48, height: 16)
+
+    private static let image: NSImage = {
+        let scale: CGFloat = 3
+        let pixelSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let image = NSImage(size: size)
+        image.lockFocusFlipped(false)
+
+        NSGraphicsContext.current?.cgContext.scaleBy(x: 1 / scale, y: 1 / scale)
+        let rect = CGRect(origin: .zero, size: pixelSize).insetBy(dx: 1.25 * scale, dy: 1.5 * scale)
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        NSColor.black.setStroke()
+        path.lineWidth = 1.35 * scale
+        path.stroke()
+
+        let text = "Time-O" as NSString
+        let font = NSFont.systemFont(ofSize: 11.2 * scale, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let textRect = CGRect(
+            x: (pixelSize.width - textSize.width) / 2 + 0.5 * scale,
+            y: (pixelSize.height - textSize.height) / 2 + 0.6 * scale,
+            width: textSize.width,
+            height: textSize.height
+        )
+        text.draw(in: textRect, withAttributes: attributes)
+
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
+    }()
 }
 
 enum OverlayAppearanceMode: String, CaseIterable, Identifiable {
@@ -310,7 +357,7 @@ struct TimerMenuBarWindow: View {
 
     private var header: some View {
         HStack(alignment: .center) {
-            Text("TimeO")
+            Text("Time-O")
                 .font(.headline)
 
             Spacer()
