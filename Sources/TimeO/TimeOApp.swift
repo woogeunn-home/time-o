@@ -15,15 +15,17 @@ struct TimeOApp: App {
                 onTogglePathDemo: { appState.toggleTimesUp() }
             )
         } label: {
-            MenuBarLogo()
+            MenuBarLogo(model: appState.model)
         }
         .menuBarExtraStyle(.window)
     }
 }
 
 struct MenuBarLogo: View {
+    @ObservedObject var model: TimerModel
+
     var body: some View {
-        Image(nsImage: Self.image)
+        Image(nsImage: model.isRunning ? Self.solidImage : Self.outlineImage)
             .resizable()
             .interpolation(.high)
             .frame(width: Self.size.width, height: Self.size.height)
@@ -32,7 +34,10 @@ struct MenuBarLogo: View {
 
     private static let size = CGSize(width: 48, height: 16)
 
-    private static let image: NSImage = {
+    private static let outlineImage = makeImage(isSolid: false)
+    private static let solidImage = makeImage(isSolid: true)
+
+    private static func makeImage(isSolid: Bool) -> NSImage {
         let scale: CGFloat = 3
         let pixelSize = CGSize(width: size.width * scale, height: size.height * scale)
         let image = NSImage(size: size)
@@ -41,9 +46,14 @@ struct MenuBarLogo: View {
         NSGraphicsContext.current?.cgContext.scaleBy(x: 1 / scale, y: 1 / scale)
         let rect = CGRect(origin: .zero, size: pixelSize).insetBy(dx: 1.25 * scale, dy: 1.5 * scale)
         let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-        NSColor.black.setStroke()
-        path.lineWidth = 1.35 * scale
-        path.stroke()
+        if isSolid {
+            NSColor.black.setFill()
+            path.fill()
+        } else {
+            NSColor.black.setStroke()
+            path.lineWidth = 1.35 * scale
+            path.stroke()
+        }
 
         let text = "Time-O" as NSString
         let font = NSFont.systemFont(ofSize: 11.2 * scale, weight: .semibold)
@@ -58,12 +68,18 @@ struct MenuBarLogo: View {
             width: textSize.width,
             height: textSize.height
         )
-        text.draw(in: textRect, withAttributes: attributes)
+        if isSolid {
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            text.draw(in: textRect, withAttributes: attributes)
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+        } else {
+            text.draw(in: textRect, withAttributes: attributes)
+        }
 
         image.unlockFocus()
         image.isTemplate = true
         return image
-    }()
+    }
 }
 
 enum OverlayAppearanceMode: String, CaseIterable, Identifiable {
@@ -107,6 +123,7 @@ final class TimerModel: ObservableObject {
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
     @Published var isFinished = false
+    @Published var isTimesUpFlowing = false
     /// Set when the user dismisses the "Time's Up" overlay, so it can play a
     /// fast sequential close before the overlay is torn down.
     @Published var isClosing = false
@@ -141,6 +158,10 @@ final class TimerModel: ObservableObject {
         return max(0, min(1, Double(remainingSeconds) / Double(totalSeconds)))
     }
 
+    var displayedOverlayPosition: OverlayPosition {
+        isFinished ? .topCenter : overlayPosition
+    }
+
     var formattedEndTime: String {
         let targetDate = endDate ?? Date().addingTimeInterval(TimeInterval(remainingSeconds))
         let formatter = DateFormatter()
@@ -157,8 +178,24 @@ final class TimerModel: ObservableObject {
         isRunning = true
         isPaused = false
         isFinished = false
+        isTimesUpFlowing = false
         resetFlow()
         scheduleTimer()
+    }
+
+    func finishImmediately() {
+        timer?.invalidate()
+        timer = nil
+        endDate = nil
+        remainingSeconds = 0
+        totalSeconds = 0
+        isRunning = false
+        isPaused = false
+        isOverlayHovered = false
+        isClosing = false
+        isTimesUpFlowing = false
+        resetFlow()
+        isFinished = true
     }
 
     func startPreview(seconds: Int) {
@@ -205,6 +242,7 @@ final class TimerModel: ObservableObject {
         isPaused = false
         isOverlayHovered = false
         isFinished = false
+        isTimesUpFlowing = false
         isClosing = false
         resetFlow()
     }
@@ -212,16 +250,7 @@ final class TimerModel: ObservableObject {
     /// Timer reached zero: keep the overlay on screen showing "Time Out!" until
     /// the user dismisses it, instead of clearing it like `stop()`.
     private func finish() {
-        timer?.invalidate()
-        timer = nil
-        endDate = nil
-        remainingSeconds = 0
-        isRunning = false
-        isPaused = false
-        isOverlayHovered = false
-        isClosing = false
-        resetFlow()
-        isFinished = true
+        finishImmediately()
     }
 
     private func resetFlow() {
@@ -681,9 +710,17 @@ struct TimerMenuBarWindow: View {
     }
 
     private func startCustomMinutes() {
-        guard let minutes = Int(customMinutesText), minutes > 0 else {
+        guard let minutes = Int(customMinutesText), minutes >= 0 else {
             return
         }
+
+        if minutes == 0 {
+            isCustomMinutesPresented = false
+            model.finishImmediately()
+            dismiss()
+            return
+        }
+
         let clampedMinutes = min(minutes, 1_440)
         isCustomMinutesPresented = false
         startTimer(minutes: clampedMinutes)
@@ -727,6 +764,7 @@ final class OverlayController {
             .receive(on: RunLoop.main)
             .sink { [weak self] finished in
                 guard let self else { return }
+                self.updateWindowPositions()
                 if finished, let screen = NSScreen.main ?? NSScreen.screens.first {
                     self.traveling.play(on: screen, model: self.model)
                 } else if !finished {
@@ -786,7 +824,7 @@ final class OverlayWindow: NSPanel {
 
         let frame = OverlayWindow.overlayFrame(
             for: screen,
-            position: model.overlayPosition,
+            position: model.displayedOverlayPosition,
             text: model.formattedRemaining
         )
         super.init(
@@ -824,7 +862,7 @@ final class OverlayWindow: NSPanel {
     func updateFrame(animated: Bool = false) {
         let frame = OverlayWindow.overlayFrame(
             for: overlayScreen,
-            position: model.overlayPosition,
+            position: model.displayedOverlayPosition,
             text: model.formattedRemaining
         )
 
@@ -842,7 +880,7 @@ final class OverlayWindow: NSPanel {
     func containsHoverPoint(_ point: NSPoint) -> Bool {
         OverlayWindow.overlayFrame(
             for: overlayScreen,
-            position: model.overlayPosition,
+            position: model.displayedOverlayPosition,
             text: model.formattedRemaining
         )
         .contains(point)
@@ -892,10 +930,10 @@ final class OverlayWindow: NSPanel {
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
-    private static func centerOverlayWidth(for text: String) -> CGFloat {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
+    static func centerOverlayWidth(for text: String) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(144, textWidth + 28)
+        return textWidth + 48
     }
 }
 
@@ -905,12 +943,12 @@ struct TimerOverlayView: View {
 
     var body: some View {
         ZStack {
-            if model.isRunning {
+            if model.isRunning || (model.isFinished && !model.isTimesUpFlowing) {
                 NormalTimerText(
                     text: model.formattedRemaining,
                     appearanceMode: model.appearanceMode,
-                    overlayPosition: model.overlayPosition,
-                    isHovered: model.isOverlayHovered,
+                    overlayPosition: model.displayedOverlayPosition,
+                    isHovered: model.isRunning && model.isOverlayHovered,
                     isWarning: model.remainingSeconds <= 10
                 )
                 .opacity(overlayOpacity)
@@ -931,7 +969,7 @@ struct TimerOverlayView: View {
     /// Hug the overlay content to the active corner so the gap to the touching
     /// screen edges matches the window inset on every side.
     private var contentAlignment: Alignment {
-        switch model.overlayPosition {
+        switch model.displayedOverlayPosition {
         case .topLeading: return .topLeading
         case .topCenter: return .top
         case .topTrailing: return .topTrailing
@@ -1431,6 +1469,21 @@ struct FlipFlapFoldShadowOverlay: View {
     }
 }
 
+enum WarningCapsuleStyle {
+    static let colors: [Color] = [
+        Color(red: 1.0, green: 0.80, blue: 0.18),
+        Color(red: 0.95, green: 0.63, blue: 0.08)
+    ]
+
+    static var gradient: LinearGradient {
+        LinearGradient(
+            colors: colors,
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
 /// Shared HUD background used by both the Normal and Flap Clock styles.
 /// The clip/stroke shape is supplied by the caller (capsule for Normal,
 /// rounded rectangle for Flap Clock).
@@ -1474,10 +1527,7 @@ struct FlapClockBackground<ContainerShape: InsettableShape>: View {
 
     private var fillColors: [Color] {
         if isWarning {
-            return [
-                Color(red: 1.0, green: 0.80, blue: 0.18),
-                Color(red: 0.95, green: 0.63, blue: 0.08)
-            ]
+            return WarningCapsuleStyle.colors
         }
 
         return isDark
@@ -1553,9 +1603,7 @@ struct NormalTimerText: View {
     }
 
     private var capsuleWidth: CGFloat {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
-        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(144, textWidth + 28)
+        OverlayWindow.centerOverlayWidth(for: text)
     }
 
     private var capsuleHeight: CGFloat {
@@ -1564,13 +1612,12 @@ struct NormalTimerText: View {
 
     private var timerText: some View {
         Text(text)
-            .font(.system(size: 40, weight: .semibold, design: .default))
+            .font(.system(size: 30, weight: .semibold, design: .default))
             .monospacedDigit()
             .foregroundStyle(textColor)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: true)
             .frame(height: 48)
-            .offset(y: -1)
     }
 }
 
