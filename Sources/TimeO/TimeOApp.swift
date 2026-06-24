@@ -262,6 +262,12 @@ final class TimeOAppState: ObservableObject {
 
     private var overlayController: OverlayController?
     private var screenObserver: NSObjectProtocol?
+    private var settingsCancellables: Set<AnyCancellable> = []
+
+    private enum SettingsKey {
+        static let appearanceMode = "overlayAppearanceMode"
+        static let overlayPosition = "overlayPosition"
+    }
 
     /// Debug: flip the "Time's Up" state on/off without waiting for a timer.
     func toggleTimesUp() {
@@ -270,8 +276,10 @@ final class TimeOAppState: ObservableObject {
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
+        restoreSettings()
         overlayController = OverlayController(model: model)
         configurePreviewModeIfNeeded()
+        observeSettings()
 
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -280,6 +288,44 @@ final class TimeOAppState: ObservableObject {
         ) { [weak self] _ in
             self?.overlayController?.rebuildWindows()
         }
+    }
+
+    private func restoreSettings() {
+        let defaults = UserDefaults.standard
+
+        if let rawAppearanceMode = defaults.string(forKey: SettingsKey.appearanceMode),
+           let appearanceMode = OverlayAppearanceMode(rawValue: rawAppearanceMode) {
+            model.appearanceMode = appearanceMode
+        }
+
+        if let rawOverlayPosition = defaults.string(forKey: SettingsKey.overlayPosition),
+           let overlayPosition = OverlayPosition(rawValue: rawOverlayPosition) {
+            model.overlayPosition = overlayPosition
+        }
+    }
+
+    private func observeSettings() {
+        guard !CommandLine.arguments.contains("--preview") else { return }
+
+        model.$appearanceMode
+            .dropFirst()
+            .sink { appearanceMode in
+                UserDefaults.standard.set(
+                    appearanceMode.rawValue,
+                    forKey: SettingsKey.appearanceMode
+                )
+            }
+            .store(in: &settingsCancellables)
+
+        model.$overlayPosition
+            .dropFirst()
+            .sink { overlayPosition in
+                UserDefaults.standard.set(
+                    overlayPosition.rawValue,
+                    forKey: SettingsKey.overlayPosition
+                )
+            }
+            .store(in: &settingsCancellables)
     }
 
     private func configurePreviewModeIfNeeded() {
@@ -362,15 +408,17 @@ struct TimerMenuBarWindow: View {
 
             Spacer()
 
-            iconButton(systemName: "circle.grid.3x3") {
-                isPositionPopoverPresented.toggle()
-            }
-            .popover(isPresented: $isPositionPopoverPresented, arrowEdge: .top) {
-                positionPopoverContent
-            }
+            if model.isRunning {
+                iconButton(systemName: "circle.grid.3x3") {
+                    isPositionPopoverPresented.toggle()
+                }
+                .popover(isPresented: $isPositionPopoverPresented, arrowEdge: .top) {
+                    positionPopoverContent
+                }
 
-            iconButton(systemName: themeToggleIconName) {
-                toggleAppearanceMode()
+                iconButton(systemName: themeToggleIconName) {
+                    toggleAppearanceMode()
+                }
             }
 
             iconButton(systemName: "power") {
@@ -428,8 +476,7 @@ struct TimerMenuBarWindow: View {
 
             VStack(spacing: 1) {
                 Text(model.formattedRemaining)
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .monospacedDigit()
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
                     .foregroundStyle(popoverPrimaryTextColor)
 
                 Text(model.formattedEndTime)
@@ -845,9 +892,9 @@ final class OverlayWindow: NSPanel {
     }
 
     private static func centerOverlayWidth(for text: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
+        let font = NSFont.monospacedSystemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(144, textWidth + 8)
+        return max(144, textWidth + 28)
     }
 }
 
@@ -1453,13 +1500,12 @@ struct NormalTimerText: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    /// #ddd in dark, #222 in light.
     private var textColor: Color {
         if isWarning {
             return Color(red: 0.18, green: 0.11, blue: 0.02)
         }
 
-        return resolvedIsDark ? Color(white: 0.867) : Color(white: 0.133)
+        return resolvedIsDark ? .white : Color(white: 0.133)
     }
 
     private var resolvedIsDark: Bool {
@@ -1506,9 +1552,9 @@ struct NormalTimerText: View {
     }
 
     private var capsuleWidth: CGFloat {
-        let font = NSFont.systemFont(ofSize: 40, weight: .semibold)
+        let font = NSFont.monospacedSystemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(144, textWidth + 8)
+        return max(144, textWidth + 28)
     }
 
     private var capsuleHeight: CGFloat {
@@ -1517,8 +1563,7 @@ struct NormalTimerText: View {
 
     private var timerText: some View {
         Text(text)
-            .font(.system(size: 40, weight: .semibold, design: .default))
-            .monospacedDigit()
+            .font(.system(size: 40, weight: .semibold, design: .monospaced))
             .foregroundStyle(textColor)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: true)
