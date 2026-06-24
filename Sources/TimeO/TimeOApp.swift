@@ -476,7 +476,8 @@ struct TimerMenuBarWindow: View {
 
             VStack(spacing: 1) {
                 Text(model.formattedRemaining)
-                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 18, weight: .semibold, design: .default))
+                    .monospacedDigit()
                     .foregroundStyle(popoverPrimaryTextColor)
 
                 Text(model.formattedEndTime)
@@ -892,7 +893,7 @@ final class OverlayWindow: NSPanel {
     }
 
     private static func centerOverlayWidth(for text: String) -> CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: 40, weight: .semibold)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
         return max(144, textWidth + 28)
     }
@@ -1552,7 +1553,7 @@ struct NormalTimerText: View {
     }
 
     private var capsuleWidth: CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: 40, weight: .semibold)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
         return max(144, textWidth + 28)
     }
@@ -1563,7 +1564,8 @@ struct NormalTimerText: View {
 
     private var timerText: some View {
         Text(text)
-            .font(.system(size: 40, weight: .semibold, design: .monospaced))
+            .font(.system(size: 40, weight: .semibold, design: .default))
+            .monospacedDigit()
             .foregroundStyle(textColor)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: true)
