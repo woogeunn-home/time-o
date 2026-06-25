@@ -176,8 +176,12 @@ final class TimerModel: ObservableObject {
     }
 
     func start(minutes: Int) {
-        let clampedMinutes = max(1, min(minutes, 24 * 60))
-        totalSeconds = clampedMinutes * 60
+        start(seconds: minutes * 60)
+    }
+
+    func start(seconds: Int) {
+        let clampedSeconds = max(1, min(seconds, 24 * 60 * 60))
+        totalSeconds = clampedSeconds
         remainingSeconds = totalSeconds
         endDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
         isRunning = true
@@ -241,6 +245,29 @@ final class TimerModel: ObservableObject {
             resume()
         } else {
             pause()
+        }
+    }
+
+    func updateRemaining(seconds: Int) {
+        guard isRunning else { return }
+
+        if !isPaused {
+            tick()
+        }
+
+        let adjustedSeconds = min(TimerDurationInput.maximumSeconds, max(0, seconds))
+
+        guard adjustedSeconds > 0 else {
+            finishImmediately()
+            return
+        }
+
+        let appliedDelta = adjustedSeconds - remainingSeconds
+        remainingSeconds = adjustedSeconds
+        totalSeconds = max(adjustedSeconds, totalSeconds + appliedDelta)
+
+        if !isPaused {
+            endDate = Date().addingTimeInterval(TimeInterval(adjustedSeconds))
         }
     }
 
@@ -408,8 +435,12 @@ struct TimerMenuBarWindow: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isCustomMinutesPresented = false
     @State private var isPositionPopoverPresented = false
+    @State private var isPopoverHovered = false
     @State private var customMinutesText = ""
+    @State private var isEditingRemainingTime = false
+    @State private var remainingTimeText = ""
     @FocusState private var isCustomMinutesFocused: Bool
+    @FocusState private var isRemainingTimeFocused: Bool
 
     private let contentWidth: CGFloat = 320
     private let contentPadding: CGFloat = 12
@@ -431,6 +462,9 @@ struct TimerMenuBarWindow: View {
             height: popoverContentHeight + contentPadding * 2,
             alignment: .top
         )
+        .onHover { isHovered in
+            isPopoverHovered = isHovered
+        }
     }
 
     @ViewBuilder
@@ -495,7 +529,7 @@ struct TimerMenuBarWindow: View {
             }
 
             if isCustomMinutesPresented {
-                TextField("", text: $customMinutesText)
+                TextField("00:00", text: $customMinutesText)
                     .multilineTextAlignment(.center)
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.large)
@@ -503,7 +537,9 @@ struct TimerMenuBarWindow: View {
                     .focused($isCustomMinutesFocused)
                     .onSubmit(startCustomMinutes)
                     .onChange(of: customMinutesText) { value in
-                        customMinutesText = value.filter(\.isNumber)
+                        customMinutesText = value.filter { character in
+                            character.isNumber || character == ":"
+                        }
                     }
                     .onAppear {
                         DispatchQueue.main.async {
@@ -527,10 +563,49 @@ struct TimerMenuBarWindow: View {
             Spacer(minLength: 0)
 
             VStack(spacing: 1) {
-                Text(model.formattedRemaining)
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .monospacedDigit()
-                    .foregroundStyle(popoverPrimaryTextColor)
+                if isEditingRemainingTime {
+                    TextField("00:00", text: $remainingTimeText)
+                        .font(.system(size: 18, weight: .semibold, design: .default))
+                        .monospacedDigit()
+                        .multilineTextAlignment(.center)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(popoverPrimaryTextColor)
+                        .frame(width: 90)
+                        .focused($isRemainingTimeFocused)
+                        .onSubmit(commitRemainingTime)
+                        .onChange(of: remainingTimeText) { value in
+                            remainingTimeText = TimerDurationInput.limitedClockText(value)
+                        }
+                        .onExitCommand {
+                            isEditingRemainingTime = false
+                        }
+                        .onAppear {
+                            DispatchQueue.main.async {
+                                isRemainingTimeFocused = true
+                            }
+                        }
+                } else {
+                    Button {
+                        remainingTimeText = model.formattedRemaining
+                        isEditingRemainingTime = true
+                    } label: {
+                        Text(model.formattedRemaining)
+                            .font(.system(size: 18, weight: .semibold, design: .default))
+                            .monospacedDigit()
+                            .foregroundStyle(popoverPrimaryTextColor)
+                            .overlay(alignment: .trailing) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(popoverSecondaryTextColor)
+                                    .opacity(isPopoverHovered ? 1 : 0)
+                                    .offset(x: 18)
+                            }
+                            .frame(maxWidth: .infinity)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(.plain)
+                    .help("Click to edit remaining time")
+                }
 
                 Text(model.formattedEndTime)
                     .font(.system(size: 18, weight: .medium, design: .default))
@@ -564,6 +639,15 @@ struct TimerMenuBarWindow: View {
             Spacer(minLength: 0)
         }
         .frame(width: contentWidth)
+    }
+
+    private func commitRemainingTime() {
+        guard let seconds = TimerDurationInput.parseSeconds(remainingTimeText) else {
+            return
+        }
+
+        model.updateRemaining(seconds: seconds)
+        isEditingRemainingTime = false
     }
 
     private var positionBoard: some View {
@@ -733,20 +817,21 @@ struct TimerMenuBarWindow: View {
     }
 
     private func startCustomMinutes() {
-        guard let minutes = Int(customMinutesText), minutes >= 0 else {
+        guard let seconds = TimerDurationInput.parseSeconds(customMinutesText) else {
             return
         }
 
-        if minutes == 0 {
+        if seconds == 0 {
             isCustomMinutesPresented = false
             model.finishImmediately()
             dismiss()
             return
         }
 
-        let clampedMinutes = min(minutes, 1_440)
         isCustomMinutesPresented = false
-        startTimer(minutes: clampedMinutes)
+        selectedMinutes = Int(ceil(Double(seconds) / 60))
+        model.start(seconds: seconds)
+        dismiss()
     }
 
     private func startTimer(minutes: Int) {

@@ -11,6 +11,7 @@ let package = Package(
         .executable(name: "TimeO", targets: ["TimeO"])
     ],
     targets: [
-        .executableTarget(name: "TimeO")
+        .executableTarget(name: "TimeO"),
+        .testTarget(name: "TimeOTests", dependencies: ["TimeO"])
     ]
 )
