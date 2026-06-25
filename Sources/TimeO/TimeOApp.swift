@@ -759,6 +759,13 @@ final class OverlayController {
             }
             .store(in: &cancellables)
 
+        model.$isPaused
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateWindowPositions()
+            }
+            .store(in: &cancellables)
+
         // On finish, carry the "Time's Up" capsule around the screen edge.
         model.$isFinished
             .receive(on: RunLoop.main)
@@ -802,13 +809,23 @@ final class OverlayController {
             if model.isOverlayHovered {
                 model.isOverlayHovered = false
             }
+            windows.forEach { $0.setInteractionEnabled(false) }
             return
         }
 
         let mouseLocation = NSEvent.mouseLocation
-        let isHovered = windows.contains { $0.containsHoverPoint(mouseLocation) }
-        if model.isOverlayHovered != isHovered {
-            model.isOverlayHovered = isHovered
+        let hoveredWindow = windows.first { $0.containsHoverPoint(mouseLocation) }
+        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isModifierHeld = modifiers.contains(.shift) || modifiers.contains(.command)
+        let isInteractionEnabled = hoveredWindow != nil && isModifierHeld
+
+        windows.forEach { window in
+            window.setInteractionEnabled(isInteractionEnabled && window === hoveredWindow)
+        }
+
+        let shouldHideOverlay = hoveredWindow != nil && !isModifierHeld
+        if model.isOverlayHovered != shouldHideOverlay {
+            model.isOverlayHovered = shouldHideOverlay
         }
     }
 
@@ -825,7 +842,8 @@ final class OverlayWindow: NSPanel {
         let frame = OverlayWindow.overlayFrame(
             for: screen,
             position: model.displayedOverlayPosition,
-            text: model.formattedRemaining
+            text: model.formattedRemaining,
+            isPaused: model.isPaused
         )
         super.init(
             contentRect: frame,
@@ -859,11 +877,16 @@ final class OverlayWindow: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    func setInteractionEnabled(_ isEnabled: Bool) {
+        ignoresMouseEvents = !isEnabled
+    }
+
     func updateFrame(animated: Bool = false) {
         let frame = OverlayWindow.overlayFrame(
             for: overlayScreen,
             position: model.displayedOverlayPosition,
-            text: model.formattedRemaining
+            text: model.formattedRemaining,
+            isPaused: model.isPaused
         )
 
         if animated {
@@ -881,7 +904,8 @@ final class OverlayWindow: NSPanel {
         OverlayWindow.overlayFrame(
             for: overlayScreen,
             position: model.displayedOverlayPosition,
-            text: model.formattedRemaining
+            text: model.formattedRemaining,
+            isPaused: model.isPaused
         )
         .contains(point)
     }
@@ -889,10 +913,11 @@ final class OverlayWindow: NSPanel {
     private static func overlayFrame(
         for screen: NSScreen,
         position: OverlayPosition,
-        text: String
+        text: String,
+        isPaused: Bool
     ) -> NSRect {
         let visibleFrame = screen.visibleFrame
-        let capsuleWidth = centerOverlayWidth(for: text)
+        let capsuleWidth = centerOverlayWidth(for: text, isPaused: isPaused)
         let isVerticalPosition: Bool
         switch position {
         case .middleLeading, .middleTrailing:
@@ -930,10 +955,11 @@ final class OverlayWindow: NSPanel {
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
-    static func centerOverlayWidth(for text: String) -> CGFloat {
+    static func centerOverlayWidth(for text: String, isPaused: Bool = false) -> CGFloat {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return textWidth + 40
+        let pausedContentWidth: CGFloat = isPaused ? 26 : 0
+        return textWidth + pausedContentWidth + 40
     }
 }
 
@@ -949,10 +975,27 @@ struct TimerOverlayView: View {
                     appearanceMode: model.appearanceMode,
                     overlayPosition: model.displayedOverlayPosition,
                     isHovered: model.isRunning && model.isOverlayHovered,
-                    isWarning: model.remainingSeconds <= 10
+                    isWarning: model.remainingSeconds <= 10,
+                    isPaused: model.isPaused
                 )
                 .opacity(overlayOpacity)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .contextMenu {
+                    Button {
+                        model.togglePause()
+                    } label: {
+                        Label(
+                            model.isPaused ? "Resume" : "Pause",
+                            systemImage: model.isPaused ? "play.fill" : "pause.fill"
+                        )
+                    }
+
+                    Button(role: .destructive) {
+                        model.stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: contentAlignment)
@@ -1548,6 +1591,7 @@ struct NormalTimerText: View {
     let overlayPosition: OverlayPosition
     let isHovered: Bool
     let isWarning: Bool
+    let isPaused: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -1603,7 +1647,7 @@ struct NormalTimerText: View {
     }
 
     private var capsuleWidth: CGFloat {
-        OverlayWindow.centerOverlayWidth(for: text)
+        OverlayWindow.centerOverlayWidth(for: text, isPaused: isPaused)
     }
 
     private var capsuleHeight: CGFloat {
@@ -1611,13 +1655,21 @@ struct NormalTimerText: View {
     }
 
     private var timerText: some View {
-        Text(text)
-            .font(.system(size: 30, weight: .semibold, design: .default))
-            .monospacedDigit()
-            .foregroundStyle(textColor)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: true)
-            .frame(height: 48)
+        HStack(spacing: 6) {
+            if isPaused {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 22, weight: .medium))
+                    .offset(y: 1)
+            }
+
+            Text(text)
+                .font(.system(size: 30, weight: .semibold, design: .default))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: true)
+        }
+        .foregroundStyle(textColor)
+        .frame(height: 48)
     }
 }
 
