@@ -122,6 +122,7 @@ final class TimerModel: ObservableObject {
     @Published var appearanceMode: OverlayAppearanceMode = .automatic
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
+    @Published var overlayProximityOpacity: Double = 1
     @Published var isOverlayContextMenuOpen = false
     @Published var isFinished = false
     @Published var isTimesUpFlowing = false
@@ -145,13 +146,15 @@ final class TimerModel: ObservableObject {
     private var timer: Timer?
 
     var formattedRemaining: String {
-        let hours = remainingSeconds / 3_600
-        let minutes = (remainingSeconds % 3_600) / 60
-        let seconds = remainingSeconds % 60
+        let sign = remainingSeconds < 0 ? "-" : ""
+        let absoluteSeconds = abs(remainingSeconds)
+        let hours = absoluteSeconds / 3_600
+        let minutes = (absoluteSeconds % 3_600) / 60
+        let seconds = absoluteSeconds % 60
         if hours > 0 {
-            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+            return String(format: "%@%02d:%02d:%02d", sign, hours, minutes, seconds)
         }
-        return String(format: "%02d:%02d", minutes, seconds)
+        return String(format: "%@%02d:%02d", sign, minutes, seconds)
     }
 
     var remainingProgress: Double {
@@ -178,6 +181,8 @@ final class TimerModel: ObservableObject {
         endDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
         isRunning = true
         isPaused = false
+        isOverlayHovered = false
+        overlayProximityOpacity = 1
         isFinished = false
         isTimesUpFlowing = false
         resetFlow()
@@ -185,18 +190,20 @@ final class TimerModel: ObservableObject {
     }
 
     func finishImmediately() {
-        timer?.invalidate()
-        timer = nil
-        endDate = nil
+        if endDate == nil {
+            endDate = Date()
+        }
         remainingSeconds = 0
         totalSeconds = 0
         isRunning = false
         isPaused = false
         isOverlayHovered = false
+        overlayProximityOpacity = 1
         isClosing = false
         isTimesUpFlowing = false
         resetFlow()
         isFinished = true
+        scheduleTimer()
     }
 
     func startPreview(seconds: Int) {
@@ -204,6 +211,8 @@ final class TimerModel: ObservableObject {
         remainingSeconds = max(0, seconds)
         isRunning = true
         isPaused = false
+        isOverlayHovered = false
+        overlayProximityOpacity = 1
         timer?.invalidate()
     }
 
@@ -242,6 +251,7 @@ final class TimerModel: ObservableObject {
         isRunning = false
         isPaused = false
         isOverlayHovered = false
+        overlayProximityOpacity = 1
         isFinished = false
         isTimesUpFlowing = false
         isClosing = false
@@ -277,7 +287,16 @@ final class TimerModel: ObservableObject {
             return
         }
 
-        let nextRemainingSeconds = max(0, Int(ceil(endDate.timeIntervalSinceNow)))
+        let interval = endDate.timeIntervalSinceNow
+        if isFinished {
+            let nextRemainingSeconds = min(0, Int(floor(interval)))
+            if remainingSeconds != nextRemainingSeconds {
+                remainingSeconds = nextRemainingSeconds
+            }
+            return
+        }
+
+        let nextRemainingSeconds = max(0, Int(ceil(interval)))
         if remainingSeconds != nextRemainingSeconds {
             remainingSeconds = nextRemainingSeconds
         }
@@ -812,7 +831,7 @@ final class OverlayController {
 
     private func startHoverTracking() {
         hoverTimer?.invalidate()
-        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.updateHoverState()
         }
         if let hoverTimer {
@@ -825,6 +844,9 @@ final class OverlayController {
             if model.isOverlayHovered {
                 model.isOverlayHovered = false
             }
+            if model.overlayProximityOpacity != 1 {
+                model.overlayProximityOpacity = 1
+            }
             windows.forEach { $0.setInteractionEnabled(false) }
             return
         }
@@ -835,9 +857,16 @@ final class OverlayController {
         let isModifierHeld = modifiers.contains(.shift) || modifiers.contains(.command)
         let isInteractionEnabled = hoveredWindow != nil
             && (isModifierHeld || model.isOverlayContextMenuOpen)
+        let proximityOpacity = isModifierHeld || model.isOverlayContextMenuOpen
+            ? 1
+            : windows.map { $0.proximityOpacity(to: mouseLocation) }.min() ?? 1
 
         windows.forEach { window in
             window.setInteractionEnabled(isInteractionEnabled && window === hoveredWindow)
+        }
+
+        if model.overlayProximityOpacity != proximityOpacity {
+            model.overlayProximityOpacity = proximityOpacity
         }
 
         let shouldHideOverlay = hoveredWindow != nil
@@ -929,6 +958,26 @@ final class OverlayWindow: NSPanel {
         .contains(point)
     }
 
+    func proximityOpacity(to point: NSPoint) -> Double {
+        let capsuleFrame = OverlayWindow.overlayFrame(
+            for: overlayScreen,
+            position: model.displayedOverlayPosition,
+            text: model.formattedRemaining,
+            isPaused: model.isPaused
+        )
+        let horizontalDistance = max(
+            0,
+            max(capsuleFrame.minX - point.x, point.x - capsuleFrame.maxX)
+        )
+        let verticalDistance = max(
+            0,
+            max(capsuleFrame.minY - point.y, point.y - capsuleFrame.maxY)
+        )
+        let distance = hypot(horizontalDistance, verticalDistance)
+        let fadeDistance: CGFloat = 140
+        return Double(min(1, distance / fadeDistance))
+    }
+
     private static func overlayFrame(
         for screen: NSScreen,
         position: OverlayPosition,
@@ -984,7 +1033,6 @@ final class OverlayWindow: NSPanel {
 
 struct TimerOverlayView: View {
     @ObservedObject var model: TimerModel
-    @State private var overlayOpacity: Double = 1
 
     var body: some View {
         ZStack {
@@ -995,9 +1043,11 @@ struct TimerOverlayView: View {
                     overlayPosition: model.displayedOverlayPosition,
                     isHovered: model.isRunning && model.isOverlayHovered,
                     isWarning: model.remainingSeconds <= 10,
-                    isPaused: model.isPaused
+                    isPaused: model.isPaused,
+                    isCompletion: model.isFinished
                 )
-                .opacity(overlayOpacity)
+                .opacity(model.overlayProximityOpacity)
+                .animation(.linear(duration: 0.06), value: model.overlayProximityOpacity)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .contextMenu {
                     Button {
@@ -1019,12 +1069,6 @@ struct TimerOverlayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: contentAlignment)
         .animation(.easeOut(duration: 0.24), value: model.isRunning)
-        .onChange(of: model.isOverlayHovered) { isHovered in
-            updateHiddenOffset(isHovered: isHovered)
-        }
-        .onChange(of: model.overlayPosition) { _ in
-            updateHiddenOffset(isHovered: model.isOverlayHovered, animated: false)
-        }
         .allowsHitTesting(model.isRunning)
     }
 
@@ -1043,16 +1087,6 @@ struct TimerOverlayView: View {
         }
     }
 
-    private func updateHiddenOffset(isHovered: Bool, animated: Bool = true) {
-        guard animated else {
-            overlayOpacity = isHovered ? 0 : 1
-            return
-        }
-
-        withAnimation(.easeOut(duration: isHovered ? 0.08 : 0.12)) {
-            overlayOpacity = isHovered ? 0 : 1
-        }
-    }
 }
 
 struct FlipFlapTimerText: View {
@@ -1532,18 +1566,7 @@ struct FlipFlapFoldShadowOverlay: View {
 }
 
 enum WarningCapsuleStyle {
-    static let colors: [Color] = [
-        Color(red: 1.0, green: 0.80, blue: 0.18),
-        Color(red: 0.95, green: 0.63, blue: 0.08)
-    ]
-
-    static var gradient: LinearGradient {
-        LinearGradient(
-            colors: colors,
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
+    static let completionFill = Color(red: 1.0, green: 0.80, blue: 0.18)
 }
 
 /// Shared HUD background used by both the Normal and Flap Clock styles.
@@ -1553,54 +1576,37 @@ struct FlapClockBackground<ContainerShape: InsettableShape>: View {
     let isDark: Bool
     let shape: ContainerShape
     var isWarning = false
+    var isCompletion = false
 
     var body: some View {
-        shape
-            .fill(.clear)
-            .background {
-                VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                    .clipShape(shape)
-            }
-            .overlay {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: fillColors,
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-            .overlay {
-                shape
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(0.04),
-                                .white.opacity(0.02)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1
-                    )
-            }
+        if isCompletion {
+            shape.fill(WarningCapsuleStyle.completionFill)
+        } else {
+            shape
+                .fill(.clear)
+                .background {
+                    VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                        .clipShape(shape)
+                }
+                .overlay {
+                    shape
+                        .fill(fillColor)
+                }
+                .overlay {
+                    shape
+                        .strokeBorder(.white.opacity(0.03), lineWidth: 1)
+                }
+        }
     }
 
-    private var fillColors: [Color] {
+    private var fillColor: Color {
         if isWarning {
-            return WarningCapsuleStyle.colors
+            return WarningCapsuleStyle.completionFill
         }
 
         return isDark
-            ? [
-                Color.black.opacity(0.20),
-                Color.black.opacity(0.26)
-            ]
-            : [
-                Color.white.opacity(0.46),
-                Color.white.opacity(0.40)
-            ]
+            ? Color.black.opacity(0.23)
+            : Color.white.opacity(0.43)
     }
 }
 
@@ -1611,6 +1617,7 @@ struct NormalTimerText: View {
     let isHovered: Bool
     let isWarning: Bool
     let isPaused: Bool
+    let isCompletion: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -1643,7 +1650,8 @@ struct NormalTimerText: View {
             FlapClockBackground(
                 isDark: resolvedIsDark,
                 shape: Capsule(style: .continuous),
-                isWarning: isWarning
+                isWarning: isWarning,
+                isCompletion: isCompletion
             )
         }
         .frame(width: capsuleWidth, height: capsuleHeight)

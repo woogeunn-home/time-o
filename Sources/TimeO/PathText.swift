@@ -131,6 +131,7 @@ final class TravelingTimeOutController {
         let capacity = TravelingTimeOutGeometry.capacity(
             in: area,
             position: model.displayedOverlayPosition,
+            timerText: model.formattedRemaining,
             timeString: TravelingTimeOutGeometry.currentTimeString()
         )
         let revealDuration = TravelingTimeOutGeometry.revealDuration(capacity: capacity)
@@ -148,7 +149,8 @@ final class TravelingTimeOutController {
             itemCount: TravelingTimeOutGeometry.itemCount(after: CGFloat(elapsed)),
             flowOffset: currentFlowOffset(area: area, now: now),
             position: activeModel?.displayedOverlayPosition ?? .topCenter,
-            includesTimer: activeModel?.isTimesUpFlowing ?? false
+            includesTimer: activeModel?.isTimesUpFlowing ?? false,
+            timerText: activeModel?.formattedRemaining ?? "00:00"
         )
     }
 
@@ -176,7 +178,9 @@ private enum TravelingTimeOutGeometry {
     static let repeatInterval: TimeInterval = 0.5
     /// Arc-length the whole trail drifts clockwise per second.
     static let flowSpeed: CGFloat = 90
-    static let timerCapsuleLength = OverlayWindow.centerOverlayWidth(for: "00:00")
+    static func timerCapsuleLength(for timerText: String) -> CGFloat {
+        OverlayWindow.centerOverlayWidth(for: timerText)
+    }
 
     /// Time the reveal takes to generate every capsule, after which flow begins.
     static func revealDuration(capacity: Int) -> TimeInterval {
@@ -190,12 +194,18 @@ private enum TravelingTimeOutGeometry {
     }
 
     /// Number of capsules that fit in a single loop (independent of flow).
-    static func capacity(in area: CGRect, position: OverlayPosition, timeString: String) -> Int {
+    static func capacity(
+        in area: CGRect,
+        position: OverlayPosition,
+        timerText: String,
+        timeString: String
+    ) -> Int {
         layout(
             count: Int.max,
             in: area,
             flowOffset: 0,
             position: position,
+            timerText: timerText,
             timeString: timeString
         ).count
     }
@@ -280,7 +290,7 @@ private enum TravelingTimeOutGeometry {
         return RoundedRectPath(rect: rect, radius: min(nestedRadius, min(rect.width, rect.height) / 2))
     }
 
-    /// Start immediately after the fixed `00:00` timer capsule, following the
+    /// Start immediately after the overtime timer capsule, following the
     /// rounded screen path clockwise from the selected timer position.
     static func timerCenterDistance(on path: RoundedRectPath, position: OverlayPosition) -> CGFloat {
         let center: CGFloat
@@ -361,18 +371,16 @@ private enum TravelingTimeOutGeometry {
         flowOffset: CGFloat = 0,
         position: OverlayPosition,
         includesTimer: Bool = false,
+        timerText: String,
         timeString: String
     ) -> [BlockLayout] {
         let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let timerCapsuleLength = timerCapsuleLength(for: timerText)
         var ringIndex = 0
         guard var currentRing = ring(ringIndex, in: area) else { return [] }
         let timerCenter = timerCenterDistance(on: currentRing, position: position)
-        var base = includesTimer
-            ? timerCenter - timerCapsuleLength / 2
-            : timerCenter + timerCapsuleLength / 2 + blockGap
-        var trailEnd = includesTimer
-            ? base + currentRing.total - blockGap
-            : base + currentRing.total - timerCapsuleLength - blockGap * 2
+        var base = timerCenter - timerCapsuleLength / 2 - blockGap - bandWidth
+        var trailEnd = base + currentRing.total - blockGap
         var cursor = base
         var lastBlockEnd = base
         var layouts: [BlockLayout] = []
@@ -382,16 +390,16 @@ private enum TravelingTimeOutGeometry {
 
         let layoutCount = max(0, count) + (includesTimer ? 1 : 0)
         for index in 0..<layoutCount {
-            let isTimerBlock = includesTimer && index == 0
-            let trailIndex = index - (includesTimer ? 1 : 0)
+            let isTimerBlock = includesTimer && index == 1
+            let trailIndex = includesTimer && index > 1 ? index - 1 : index
             let blockContent: BlockContent = isTimerBlock
-                ? .text("00:00")
+                ? .text(timerText)
                 : trailIndex == 0
                     ? .symbol("xmark.circle.fill")
                     : content(at: trailIndex - 1)
             let measured = isTimerBlock
                 ? measureText(
-                    "00:00",
+                    timerText,
                     font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold),
                     usesMonospacedDigit: true
                 )
@@ -450,6 +458,9 @@ private enum TravelingTimeOutGeometry {
             layouts.append(BlockLayout(id: index, band: bandPath(on: currentRing, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
             lastBlockEnd = cursor + blockLength
             cursor = lastBlockEnd + blockGap
+            if !includesTimer, trailIndex == 0 {
+                cursor += timerCapsuleLength + blockGap
+            }
         }
 
         // When the final requested block is also the last one that can fit,
@@ -552,7 +563,8 @@ private enum TravelingTimeOutGeometry {
         itemCount: Int,
         flowOffset: CGFloat,
         position: OverlayPosition,
-        includesTimer: Bool
+        includesTimer: Bool,
+        timerText: String
     ) -> Bool {
         let layouts = layout(
             count: itemCount,
@@ -560,6 +572,7 @@ private enum TravelingTimeOutGeometry {
             flowOffset: flowOffset,
             position: position,
             includesTimer: includesTimer,
+            timerText: timerText,
             timeString: currentTimeString()
         )
         return layouts.contains { $0.band.contains(point) }
@@ -569,7 +582,7 @@ private enum TravelingTimeOutGeometry {
 // MARK: - Fill driver
 
 private final class TimeOutFillModel: ObservableObject {
-    // The fixed `00:00` capsule remains visible; reveal the close button beside it first.
+    // The overtime timer capsule remains visible; reveal the close button beside it first.
     @Published var itemCount = 1
     /// Number of trailing capsules already retracted during the close animation.
     @Published var closedCount = 0
@@ -645,6 +658,7 @@ struct TravelingTimeOutView: View {
             let capacity = TravelingTimeOutGeometry.capacity(
                 in: area,
                 position: model.displayedOverlayPosition,
+                timerText: model.formattedRemaining,
                 timeString: timeString
             )
             let revealDuration = TravelingTimeOutGeometry.revealDuration(capacity: capacity)
@@ -661,6 +675,7 @@ struct TravelingTimeOutView: View {
                 flowOffset: flow,
                 position: model.displayedOverlayPosition,
                 includesTimer: isFlowing,
+                timerText: model.formattedRemaining,
                 timeString: timeString
             )
             // Remove the most recently generated capsules first.
@@ -668,7 +683,7 @@ struct TravelingTimeOutView: View {
 
             ZStack {
                 ForEach(visible) { layout in
-                    layout.band.fill(WarningCapsuleStyle.gradient)
+                    layout.band.fill(WarningCapsuleStyle.completionFill)
                 }
                 ForEach(visible) { layout in
                     ForEach(layout.glyphs) { item in
@@ -688,6 +703,7 @@ struct TravelingTimeOutView: View {
                     in: area,
                     position: model.displayedOverlayPosition,
                     includesTimer: model.isTimesUpFlowing,
+                    timerText: model.formattedRemaining,
                     timeString: TravelingTimeOutGeometry.currentTimeString()
                 ).count
                 fill.beginClose(total: total) { model.stop() }
