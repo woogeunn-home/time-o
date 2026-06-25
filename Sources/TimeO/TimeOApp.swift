@@ -933,7 +933,7 @@ final class OverlayWindow: NSPanel {
     static func centerOverlayWidth(for text: String) -> CGFloat {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return textWidth + 48
+        return textWidth + 40
     }
 }
 
