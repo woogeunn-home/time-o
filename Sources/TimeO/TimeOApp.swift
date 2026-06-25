@@ -122,6 +122,7 @@ final class TimerModel: ObservableObject {
     @Published var appearanceMode: OverlayAppearanceMode = .automatic
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
+    @Published var isOverlayContextMenuOpen = false
     @Published var isFinished = false
     @Published var isTimesUpFlowing = false
     /// Set when the user dismisses the "Time's Up" overlay, so it can play a
@@ -766,6 +767,21 @@ final class OverlayController {
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak model] _ in
+                model?.isOverlayContextMenuOpen = true
+                model?.isOverlayHovered = false
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak model] _ in
+                model?.isOverlayContextMenuOpen = false
+            }
+            .store(in: &cancellables)
+
         // On finish, carry the "Time's Up" capsule around the screen edge.
         model.$isFinished
             .receive(on: RunLoop.main)
@@ -817,13 +833,16 @@ final class OverlayController {
         let hoveredWindow = windows.first { $0.containsHoverPoint(mouseLocation) }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isModifierHeld = modifiers.contains(.shift) || modifiers.contains(.command)
-        let isInteractionEnabled = hoveredWindow != nil && isModifierHeld
+        let isInteractionEnabled = hoveredWindow != nil
+            && (isModifierHeld || model.isOverlayContextMenuOpen)
 
         windows.forEach { window in
             window.setInteractionEnabled(isInteractionEnabled && window === hoveredWindow)
         }
 
-        let shouldHideOverlay = hoveredWindow != nil && !isModifierHeld
+        let shouldHideOverlay = hoveredWindow != nil
+            && !isModifierHeld
+            && !model.isOverlayContextMenuOpen
         if model.isOverlayHovered != shouldHideOverlay {
             model.isOverlayHovered = shouldHideOverlay
         }
@@ -1659,7 +1678,6 @@ struct NormalTimerText: View {
             if isPaused {
                 Image(systemName: "pause.fill")
                     .font(.system(size: 22, weight: .medium))
-                    .offset(y: 1)
             }
 
             Text(text)
