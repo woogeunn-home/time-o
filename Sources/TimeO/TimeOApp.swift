@@ -126,6 +126,7 @@ final class TimerModel: ObservableObject {
     @Published var isOverlayContextMenuOpen = false
     @Published var isFinished = false
     @Published var isTimesUpFlowing = false
+    @Published var isCompletionCapsuleHovered = false
     /// Set when the user dismisses the "Time's Up" overlay, so it can play a
     /// fast sequential close before the overlay is torn down.
     @Published var isClosing = false
@@ -201,6 +202,7 @@ final class TimerModel: ObservableObject {
         overlayProximityOpacity = 1
         isClosing = false
         isTimesUpFlowing = false
+        isCompletionCapsuleHovered = false
         resetFlow()
         isFinished = true
         scheduleTimer()
@@ -254,6 +256,7 @@ final class TimerModel: ObservableObject {
         overlayProximityOpacity = 1
         isFinished = false
         isTimesUpFlowing = false
+        isCompletionCapsuleHovered = false
         isClosing = false
         resetFlow()
     }
@@ -978,7 +981,7 @@ final class OverlayWindow: NSPanel {
         return Double(min(1, distance / fadeDistance))
     }
 
-    private static func overlayFrame(
+    static func overlayFrame(
         for screen: NSScreen,
         position: OverlayPosition,
         text: String,
@@ -1046,8 +1049,13 @@ struct TimerOverlayView: View {
                     isPaused: model.isPaused,
                     isCompletion: model.isFinished
                 )
-                .opacity(model.overlayProximityOpacity)
+                .opacity(
+                    model.isFinished && model.isCompletionCapsuleHovered
+                        ? 0.5
+                        : model.overlayProximityOpacity
+                )
                 .animation(.linear(duration: 0.06), value: model.overlayProximityOpacity)
+                .animation(.easeOut(duration: 0.12), value: model.isCompletionCapsuleHovered)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .contextMenu {
                     Button {

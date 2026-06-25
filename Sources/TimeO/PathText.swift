@@ -107,6 +107,7 @@ final class TravelingTimeOutController {
         globalClickMonitor = nil
         localMoveMonitor = nil
         globalMoveMonitor = nil
+        activeModel?.isCompletionCapsuleHovered = false
     }
 
     /// Cursor position in the overlay's coordinate space, plus the layout area,
@@ -141,6 +142,17 @@ final class TravelingTimeOutController {
 
     private func isOverCapsule() -> Bool {
         guard let (point, area) = overlayPoint() else { return false }
+        if let model = activeModel,
+           !model.isTimesUpFlowing,
+           let activeScreen,
+           OverlayWindow.overlayFrame(
+               for: activeScreen,
+               position: model.displayedOverlayPosition,
+               text: model.formattedRemaining,
+               isPaused: model.isPaused
+           ).contains(NSEvent.mouseLocation) {
+            return true
+        }
         let now = CACurrentMediaTime()
         let elapsed = now - startTime
         return TravelingTimeOutGeometry.contains(
@@ -157,7 +169,11 @@ final class TravelingTimeOutController {
     private func updateHoverPause() {
         guard let model = activeModel else { return }
         let now = CACurrentMediaTime()
-        if isOverCapsule() {
+        let isHovered = isOverCapsule()
+        if model.isCompletionCapsuleHovered != isHovered {
+            model.isCompletionCapsuleHovered = isHovered
+        }
+        if isHovered {
             if model.flowPauseStartedAt == nil { model.flowPauseStartedAt = now }
         } else if let started = model.flowPauseStartedAt {
             model.flowPausedTotal += now - started
@@ -384,8 +400,8 @@ private enum TravelingTimeOutGeometry {
         var cursor = base
         var lastBlockEnd = base
         var layouts: [BlockLayout] = []
+        var blockStarts: [CGFloat] = []
         var glyphID = 0
-        var lastBlockStart: CGFloat?
         var reachedEndOfTrail = false
 
         let layoutCount = max(0, count) + (includesTimer ? 1 : 0)
@@ -436,7 +452,7 @@ private enum TravelingTimeOutGeometry {
                 }
             }
 
-            lastBlockStart = cursor
+            blockStarts.append(cursor)
             let contentInset = (isTimerBlock || isSymbolBlock)
                 ? (blockLength - measured.width) / 2
                 : sidePadding
@@ -484,7 +500,18 @@ private enum TravelingTimeOutGeometry {
         // Stretch the last capsule to the first capsule's edge so the completed
         // trail keeps the standard gap, then use the added space for a closing
         // phrase instead of leaving a large empty tail.
-        if reachedEndOfTrail, let lastBlockStart, let last = layouts.last {
+        // Never use an icon capsule as the trail's final filler. Remove trailing
+        // icons and let the preceding text capsule absorb the remaining width.
+        while reachedEndOfTrail,
+              layouts.count > 1,
+              layouts.last?.glyphs.contains(where: \.isSymbol) == true {
+            layouts.removeLast()
+            blockStarts.removeLast()
+        }
+
+        if reachedEndOfTrail,
+           let lastBlockStart = blockStarts.last,
+           let last = layouts.last {
             let finalLength = trailEnd - lastBlockStart
             let availableTextWidth = max(0, finalLength - sidePadding * 2)
             let closingContent = closingPhrases
@@ -592,7 +619,7 @@ private final class TimeOutFillModel: ObservableObject {
     private var isClosing = false
 
     /// Fast retract interval, per capsule.
-    private let closeInterval: TimeInterval = 0.05
+    private let closeInterval: TimeInterval = 0.025
 
     func start() {
         guard revealTimer == nil else { return }
@@ -684,13 +711,16 @@ struct TravelingTimeOutView: View {
             ZStack {
                 ForEach(visible) { layout in
                     layout.band.fill(WarningCapsuleStyle.completionFill)
+                        .opacity(capsuleOpacity(for: layout))
                 }
                 ForEach(visible) { layout in
                     ForEach(layout.glyphs) { item in
                         glyph(item)
                     }
+                    .opacity(capsuleOpacity(for: layout))
                 }
             }
+            .animation(.easeOut(duration: 0.12), value: model.isCompletionCapsuleHovered)
             .onAppear { fill.start() }
             .onDisappear { fill.stop() }
             .onChange(of: isFlowing) { flowing in
@@ -710,6 +740,10 @@ struct TravelingTimeOutView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    private func capsuleOpacity(for layout: BlockLayout) -> Double {
+        layout.id == 0 || !model.isCompletionCapsuleHovered ? 1 : 0.5
     }
 
     @ViewBuilder
