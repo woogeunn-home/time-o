@@ -9,6 +9,7 @@ import SwiftUI
 /// set of phrases — until the trail wraps once around the screen edge.
 final class TravelingTimeOutController {
     private var window: NSPanel?
+    private var closeButtonWindow: NSPanel?
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
     private var localMoveMonitor: Any?
@@ -53,11 +54,14 @@ final class TravelingTimeOutController {
         window = panel
         activeModel = model
         activeScreen = screen
+        createCloseButtonTrackingWindow(on: screen, model: model)
         startClickMonitoring()
     }
 
     func stop() {
         stopClickMonitoring()
+        closeButtonWindow?.close()
+        closeButtonWindow = nil
         window?.close()
         window = nil
         activeModel = nil
@@ -68,7 +72,7 @@ final class TravelingTimeOutController {
         stopClickMonitoring()
 
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self, self.isOverCapsule() else {
+            guard let self, self.isOverCloseButton() else {
                 return event
             }
             self.beginClose()
@@ -76,7 +80,7 @@ final class TravelingTimeOutController {
         }
 
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self, self.isOverCapsule() else { return }
+            guard let self, self.isOverCloseButton() else { return }
             DispatchQueue.main.async {
                 self.beginClose()
             }
@@ -110,6 +114,46 @@ final class TravelingTimeOutController {
         activeModel?.isCompletionCapsuleHovered = false
     }
 
+    private func createCloseButtonTrackingWindow(on screen: NSScreen, model: TimerModel) {
+        let area = TravelingTimeOutGeometry.layoutArea(
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame
+        )
+        let buttonFrame = TravelingTimeOutGeometry.closeButtonFrame(
+            in: area,
+            timerText: model.formattedRemaining
+        )
+        let screenFrame = NSRect(
+            x: screen.frame.minX + buttonFrame.minX,
+            y: screen.frame.maxY - buttonFrame.maxY,
+            width: buttonFrame.width,
+            height: buttonFrame.height
+        )
+        let panel = NSPanel(
+            contentRect: screenFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = NSWindow.Level(Int(NSWindow.Level.screenSaver.rawValue) + 1)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isReleasedWhenClosed = false
+        panel.ignoresMouseEvents = false
+        panel.hidesOnDeactivate = false
+        panel.animationBehavior = .none
+        panel.acceptsMouseMovedEvents = true
+        let trackingView = CloseButtonTrackingView(frame: NSRect(origin: .zero, size: screenFrame.size)) { [weak self] in
+            self?.beginClose()
+        }
+        trackingView.autoresizingMask = [.width, .height]
+        panel.contentView = trackingView
+        panel.orderFrontRegardless()
+        closeButtonWindow = panel
+    }
+
     /// Cursor position in the overlay's coordinate space, plus the layout area,
     /// or nil when the cursor is off the active screen.
     private func overlayPoint() -> (point: CGPoint, area: CGRect)? {
@@ -131,7 +175,7 @@ final class TravelingTimeOutController {
         guard let model = activeModel else { return 0 }
         let capacity = TravelingTimeOutGeometry.capacity(
             in: area,
-            position: model.displayedOverlayPosition,
+            position: .topCenter,
             timerText: model.formattedRemaining,
             timeString: TravelingTimeOutGeometry.currentTimeString()
         )
@@ -140,14 +184,28 @@ final class TravelingTimeOutController {
         return TravelingTimeOutGeometry.flowOffset(flowSeconds: flowSeconds)
     }
 
-    private func isOverCapsule() -> Bool {
+    private func isOverCloseButton() -> Bool {
         guard let (point, area) = overlayPoint() else { return false }
+        return TravelingTimeOutGeometry.closeButtonFrame(
+            in: area,
+            timerText: activeModel?.formattedRemaining ?? "00:00"
+        ).contains(point)
+    }
+
+    private func isOverInteractiveArea() -> Bool {
+        guard let (point, area) = overlayPoint() else { return false }
+        if TravelingTimeOutGeometry.closeButtonFrame(
+            in: area,
+            timerText: activeModel?.formattedRemaining ?? "00:00"
+        ).contains(point) {
+            return true
+        }
         if let model = activeModel,
            !model.isTimesUpFlowing,
            let activeScreen,
            OverlayWindow.overlayFrame(
                for: activeScreen,
-               position: model.displayedOverlayPosition,
+               position: .topCenter,
                text: model.formattedRemaining,
                isPaused: model.isPaused
            ).contains(NSEvent.mouseLocation) {
@@ -160,7 +218,7 @@ final class TravelingTimeOutController {
             in: area,
             itemCount: TravelingTimeOutGeometry.itemCount(after: CGFloat(elapsed)),
             flowOffset: currentFlowOffset(area: area, now: now),
-            position: activeModel?.displayedOverlayPosition ?? .topCenter,
+            position: .topCenter,
             includesTimer: activeModel?.isTimesUpFlowing ?? false,
             timerText: activeModel?.formattedRemaining ?? "00:00"
         )
@@ -169,7 +227,7 @@ final class TravelingTimeOutController {
     private func updateHoverPause() {
         guard let model = activeModel else { return }
         let now = CACurrentMediaTime()
-        let isHovered = isOverCapsule()
+        let isHovered = isOverInteractiveArea()
         if model.isCompletionCapsuleHovered != isHovered {
             model.isCompletionCapsuleHovered = isHovered
         }
@@ -182,6 +240,62 @@ final class TravelingTimeOutController {
     }
 }
 
+private final class CloseButtonTrackingView: NSView {
+    private let onClick: () -> Void
+    private var trackingArea: NSTrackingArea?
+
+    init(frame frameRect: NSRect, onClick: @escaping () -> Void) {
+        self.onClick = onClick
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func updateTrackingAreas() {
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+        super.updateTrackingAreas()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick()
+    }
+}
+
 private enum TravelingTimeOutGeometry {
     static let inset: CGFloat = 32
     static let cornerRadius: CGFloat = 120
@@ -190,6 +304,8 @@ private enum TravelingTimeOutGeometry {
     static let symbolSize: CGFloat = 32
     static let sidePadding: CGFloat = 24
     static let blockGap: CGFloat = 9
+    static let closeButtonGap: CGFloat = 10
+    static let closeButtonSize: CGFloat = 56
     static let ringSpacing: CGFloat = bandWidth + 16
     static let repeatInterval: TimeInterval = 0.5
     /// Arc-length the whole trail drifts clockwise per second.
@@ -250,15 +366,15 @@ private enum TravelingTimeOutGeometry {
         .symbol("flag.pattern.checkered")
     ]
 
-    static let closingPhrases = [
-        "Pause here — step away, stretch, and give your eyes a proper break",
-        "Step away, stretch, and give your eyes a proper break",
-        "Take a breath, stretch, and step away for a moment",
-        "Take a proper break now"
-    ]
-
     static func content(at index: Int) -> BlockContent {
         blocks[index % blocks.count]
+    }
+
+    static func isSymbol(_ content: BlockContent) -> Bool {
+        if case .symbol = content {
+            return true
+        }
+        return false
     }
 
     struct GlyphRel {
@@ -286,6 +402,19 @@ private enum TravelingTimeOutGeometry {
             y: screenFrame.maxY - visibleFrame.maxY,
             width: visibleFrame.width,
             height: visibleFrame.height
+        )
+    }
+
+    static func closeButtonFrame(in area: CGRect, timerText: String) -> CGRect {
+        let timerWidth = timerCapsuleLength(for: timerText)
+        let timerHeight = bandWidth
+        let timerX = area.midX - timerWidth / 2
+        let timerY = area.minY + 4
+        return CGRect(
+            x: timerX + timerWidth / 2 - closeButtonSize / 2,
+            y: timerY + timerHeight + closeButtonGap,
+            width: closeButtonSize,
+            height: closeButtonSize
         )
     }
 
@@ -351,6 +480,50 @@ private enum TravelingTimeOutGeometry {
         }
     }
 
+    private static func blockLength(
+        for content: BlockContent,
+        measuredWidth: CGFloat,
+        isTimerBlock: Bool,
+        timerCapsuleLength: CGFloat
+    ) -> CGFloat {
+        if isTimerBlock {
+            return timerCapsuleLength
+        }
+
+        return isSymbol(content)
+            ? bandWidth
+            : sidePadding * 2 + measuredWidth
+    }
+
+    private static func wouldLeaveOnlyTrailingSymbols(
+        startingAt trailIndex: Int,
+        cursor: CGFloat,
+        trailEnd: CGFloat,
+        font: NSFont,
+        timeString: String
+    ) -> Bool {
+        var lookaheadCursor = cursor
+        var lookaheadIndex = trailIndex
+
+        while isSymbol(content(at: lookaheadIndex)) {
+            if lookaheadCursor + bandWidth > trailEnd {
+                return true
+            }
+            lookaheadCursor += bandWidth + blockGap
+            lookaheadIndex += 1
+        }
+
+        let nextContent = content(at: lookaheadIndex)
+        let nextMeasured = measure(nextContent, font: font, timeString: timeString)
+        let nextLength = blockLength(
+            for: nextContent,
+            measuredWidth: nextMeasured.width,
+            isTimerBlock: false,
+            timerCapsuleLength: 0
+        )
+        return lookaheadCursor + nextLength > trailEnd
+    }
+
     private static func measureText(
         _ string: String,
         font: NSFont,
@@ -374,11 +547,10 @@ private enum TravelingTimeOutGeometry {
         return (glyphs, cursor)
     }
 
-    /// Lays out up to `count` separated capsule blocks. Block 0 is the close
-    /// button (its own capsule); the rest cycle the phrases. Blocks fill clockwise
-    /// from the top-center; when a loop completes, the trail steps to the next
-    /// inner ring — starting directly below where the previous ring ran out of
-    /// room so the seam bends downward — and stops after `maxLoops` loops.
+    /// Lays out up to `count` separated phrase blocks. While flowing, the timer
+    /// capsule becomes the first block in the same rounded-rect path. Blocks fill
+    /// clockwise from the top-center; when a loop completes, the trail steps to
+    /// the next inner ring and stops after `maxLoops` loops.
     static let maxLoops = 1
 
     static func layout(
@@ -395,7 +567,9 @@ private enum TravelingTimeOutGeometry {
         var ringIndex = 0
         guard var currentRing = ring(ringIndex, in: area) else { return [] }
         let timerCenter = timerCenterDistance(on: currentRing, position: position)
-        var base = timerCenter - timerCapsuleLength / 2 - blockGap - bandWidth
+        var base = includesTimer
+            ? timerCenter - timerCapsuleLength / 2
+            : timerCenter + timerCapsuleLength / 2 + blockGap
         var trailEnd = base + currentRing.total - blockGap
         var cursor = base
         var lastBlockEnd = base
@@ -406,13 +580,11 @@ private enum TravelingTimeOutGeometry {
 
         let layoutCount = max(0, count) + (includesTimer ? 1 : 0)
         for index in 0..<layoutCount {
-            let isTimerBlock = includesTimer && index == 1
-            let trailIndex = includesTimer && index > 1 ? index - 1 : index
+            let isTimerBlock = includesTimer && index == 0
+            let trailIndex = includesTimer ? index - 1 : index
             let blockContent: BlockContent = isTimerBlock
                 ? .text(timerText)
-                : trailIndex == 0
-                    ? .symbol("xmark.circle.fill")
-                    : content(at: trailIndex - 1)
+                : content(at: trailIndex)
             let measured = isTimerBlock
                 ? measureText(
                     timerText,
@@ -426,11 +598,12 @@ private enum TravelingTimeOutGeometry {
             } else {
                 isSymbolBlock = false
             }
-            let blockLength = isTimerBlock
-                ? timerCapsuleLength
-                : isSymbolBlock
-                    ? bandWidth
-                    : sidePadding * 2 + measured.width
+            let blockLength = blockLength(
+                for: blockContent,
+                measuredWidth: measured.width,
+                isTimerBlock: isTimerBlock,
+                timerCapsuleLength: timerCapsuleLength
+            )
 
             // After a full loop, step inward (up to maxLoops) or stop.
             if cursor + blockLength > trailEnd {
@@ -450,6 +623,20 @@ private enum TravelingTimeOutGeometry {
                     reachedEndOfTrail = true
                     break
                 }
+            }
+
+            if !isTimerBlock,
+               isSymbolBlock,
+               ringIndex + 1 >= maxLoops,
+               wouldLeaveOnlyTrailingSymbols(
+                   startingAt: trailIndex,
+                   cursor: cursor,
+                   trailEnd: trailEnd,
+                   font: font,
+                   timeString: timeString
+               ) {
+                reachedEndOfTrail = true
+                break
             }
 
             blockStarts.append(cursor)
@@ -474,32 +661,37 @@ private enum TravelingTimeOutGeometry {
             layouts.append(BlockLayout(id: index, band: bandPath(on: currentRing, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
             lastBlockEnd = cursor + blockLength
             cursor = lastBlockEnd + blockGap
-            if !includesTimer, trailIndex == 0 {
-                cursor += timerCapsuleLength + blockGap
-            }
         }
 
         // When the final requested block is also the last one that can fit,
         // close the loop immediately instead of waiting for one more reveal tick.
         if !reachedEndOfTrail, layouts.count == layoutCount {
             let nextTrailIndex = count
-            let nextContent: BlockContent = nextTrailIndex == 0
-                ? .symbol("xmark.circle.fill")
-                : content(at: nextTrailIndex - 1)
-            let nextMeasurement = measure(nextContent, font: font, timeString: timeString)
-            let nextLength: CGFloat
-            if case .symbol = nextContent {
-                nextLength = bandWidth
+            let nextContent = content(at: nextTrailIndex)
+            if isSymbol(nextContent) {
+                reachedEndOfTrail = ringIndex + 1 >= maxLoops
+                    && wouldLeaveOnlyTrailingSymbols(
+                        startingAt: nextTrailIndex,
+                        cursor: cursor,
+                        trailEnd: trailEnd,
+                        font: font,
+                        timeString: timeString
+                    )
             } else {
-                nextLength = sidePadding * 2 + nextMeasurement.width
+                let nextMeasurement = measure(nextContent, font: font, timeString: timeString)
+                let nextLength = blockLength(
+                    for: nextContent,
+                    measuredWidth: nextMeasurement.width,
+                    isTimerBlock: false,
+                    timerCapsuleLength: timerCapsuleLength
+                )
+                reachedEndOfTrail = cursor + nextLength > trailEnd
+                    && ringIndex + 1 >= maxLoops
             }
-            reachedEndOfTrail = cursor + nextLength > trailEnd
-                && ringIndex + 1 >= maxLoops
         }
 
         // Stretch the last capsule to the first capsule's edge so the completed
-        // trail keeps the standard gap, then use the added space for a closing
-        // phrase instead of leaving a large empty tail.
+        // trail keeps the standard gap without swapping its generated content.
         // Never use an icon capsule as the trail's final filler. Remove trailing
         // icons and let the preceding text capsule absorb the remaining width.
         while reachedEndOfTrail,
@@ -513,41 +705,6 @@ private enum TravelingTimeOutGeometry {
            let lastBlockStart = blockStarts.last,
            let last = layouts.last {
             let finalLength = trailEnd - lastBlockStart
-            let availableTextWidth = max(0, finalLength - sidePadding * 2)
-            let closingContent = closingPhrases
-                .map { (phrase: $0, measurement: measureText($0, font: font)) }
-                .first { $0.measurement.width <= availableTextWidth }
-
-            let finalGlyphs: [PlacedGlyph]
-            if let closingContent {
-                let spacerWidth = (" " as NSString).size(withAttributes: [.font: font]).width
-                let exclamationWidth = ("!" as NSString).size(withAttributes: [.font: font]).width
-                let remainingWidth = availableTextWidth - closingContent.measurement.width
-                let exclamationCount = remainingWidth > spacerWidth
-                    ? max(0, Int(floor((remainingWidth - spacerWidth) / exclamationWidth)))
-                    : 0
-                let finalText = exclamationCount > 0
-                    ? "\(closingContent.phrase) \(String(repeating: "!", count: exclamationCount))"
-                    : closingContent.phrase
-                let finalMeasurement = measureText(finalText, font: font)
-                let contentStart = lastBlockStart + sidePadding + flowOffset
-                finalGlyphs = finalMeasurement.glyphs.map { glyph -> PlacedGlyph in
-                    defer { glyphID += 1 }
-                    let placement = currentRing.locate(contentStart + glyph.center)
-                    return PlacedGlyph(
-                        id: glyphID,
-                        character: glyph.character,
-                        isSymbol: false,
-                        symbolName: nil,
-                        usesMonospacedDigit: false,
-                        position: placement.0,
-                        angle: placement.1
-                    )
-                }
-            } else {
-                finalGlyphs = last.glyphs
-            }
-
             layouts[layouts.count - 1] = BlockLayout(
                 id: last.id,
                 band: bandPath(
@@ -555,7 +712,7 @@ private enum TravelingTimeOutGeometry {
                     start: lastBlockStart + flowOffset,
                     length: finalLength
                 ),
-                glyphs: finalGlyphs
+                glyphs: last.glyphs
             )
         }
 
@@ -684,7 +841,7 @@ struct TravelingTimeOutView: View {
             let now = CACurrentMediaTime()
             let capacity = TravelingTimeOutGeometry.capacity(
                 in: area,
-                position: model.displayedOverlayPosition,
+                position: .topCenter,
                 timerText: model.formattedRemaining,
                 timeString: timeString
             )
@@ -700,7 +857,7 @@ struct TravelingTimeOutView: View {
                 count: fill.itemCount,
                 in: area,
                 flowOffset: flow,
-                position: model.displayedOverlayPosition,
+                position: .topCenter,
                 includesTimer: isFlowing,
                 timerText: model.formattedRemaining,
                 timeString: timeString
@@ -719,6 +876,12 @@ struct TravelingTimeOutView: View {
                     }
                     .opacity(capsuleOpacity(for: layout))
                 }
+                closeButton(
+                    frame: TravelingTimeOutGeometry.closeButtonFrame(
+                        in: area,
+                        timerText: model.formattedRemaining
+                    )
+                )
             }
             .animation(.easeOut(duration: 0.12), value: model.isCompletionCapsuleHovered)
             .onAppear { fill.start() }
@@ -731,7 +894,7 @@ struct TravelingTimeOutView: View {
                 let total = TravelingTimeOutGeometry.layout(
                     count: fill.itemCount,
                     in: area,
-                    position: model.displayedOverlayPosition,
+                    position: .topCenter,
                     includesTimer: model.isTimesUpFlowing,
                     timerText: model.formattedRemaining,
                     timeString: TravelingTimeOutGeometry.currentTimeString()
@@ -743,7 +906,26 @@ struct TravelingTimeOutView: View {
     }
 
     private func capsuleOpacity(for layout: BlockLayout) -> Double {
-        layout.id == 0 || !model.isCompletionCapsuleHovered ? 1 : 0.5
+        model.isCompletionCapsuleHovered ? 0.5 : 1
+    }
+
+    private func closeButton(frame: CGRect) -> some View {
+        ZStack {
+            Circle()
+                .fill(WarningCapsuleStyle.completionFill)
+                .overlay {
+                    Circle()
+                        .strokeBorder(.white.opacity(0.03), lineWidth: 1)
+                }
+
+            Image(systemName: "xmark")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(ink)
+        }
+        .frame(width: frame.width, height: frame.height)
+        .position(x: frame.midX, y: frame.midY)
+        .opacity(model.isCompletionCapsuleHovered ? 1 : 0.92)
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
