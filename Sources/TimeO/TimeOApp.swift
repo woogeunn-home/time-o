@@ -1119,21 +1119,49 @@ final class OverlayWindow: NSPanel {
     }
 }
 
+/// Wraps the static timer capsule so it shivers in sync with the traveling
+/// "Time's Up" capsules while the close button is hovered. The per-frame driver
+/// (TimelineView) only runs while `active`, so the idle timer pays nothing.
+struct CompletionTremble<Content: View>: View {
+    let active: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if active {
+            TimelineView(.animation) { context in
+                content.offset(Self.offset(now: context.date.timeIntervalSinceReferenceDate))
+            }
+        } else {
+            content
+        }
+    }
+
+    /// Matches the trail's `trembleOffset` (amplitude/frequency) for the lead
+    /// capsule so the timer trembles like its neighbors.
+    private static func offset(now: TimeInterval) -> CGSize {
+        let t = CGFloat(now)
+        let amplitude: CGFloat = 1.8
+        return CGSize(width: sin(t * 27) * amplitude, height: cos(t * 31) * amplitude)
+    }
+}
+
 struct TimerOverlayView: View {
     @ObservedObject var model: TimerModel
 
     var body: some View {
         ZStack {
             if model.isRunning || (model.isFinished && !model.isTimesUpFlowing) {
-                NormalTimerText(
-                    text: model.formattedRemaining,
-                    appearanceMode: model.appearanceMode,
-                    overlayPosition: model.displayedOverlayPosition,
-                    isHovered: model.isRunning && model.isOverlayHovered,
-                    isWarning: model.remainingSeconds < 60,
-                    isPaused: model.isPaused,
-                    isCompletion: model.isFinished
-                )
+                CompletionTremble(active: model.isFinished && model.isCompletionCapsuleHovered) {
+                    NormalTimerText(
+                        text: model.formattedRemaining,
+                        appearanceMode: model.appearanceMode,
+                        overlayPosition: model.displayedOverlayPosition,
+                        isHovered: model.isRunning && model.isOverlayHovered,
+                        isWarning: model.remainingSeconds < 60,
+                        isPaused: model.isPaused,
+                        isCompletion: model.isFinished
+                    )
+                }
                 .opacity(model.overlayProximityOpacity)
                 .animation(.linear(duration: 0.06), value: model.overlayProximityOpacity)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
