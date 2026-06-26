@@ -333,7 +333,6 @@ private enum TravelingTimeOutGeometry {
         timeString: String
     ) -> Int {
         layout(
-            count: Int.max,
             in: area,
             flowOffset: 0,
             position: position,
@@ -352,6 +351,7 @@ private enum TravelingTimeOutGeometry {
     static let blocks: [BlockContent] = [
         .text("Cautions! Your focus session has fully ended now"),
         .symbol("globe.fill"),
+        .text("시간 땡"),
         .text("Take a breath"),
         .text("Time's up — please wrap up whatever you're on"),
         .currentTime,
@@ -364,6 +364,15 @@ private enum TravelingTimeOutGeometry {
         .text("Seriously, step away from the screen and stretch a little"),
         .symbol("basketball"),
         .symbol("flag.pattern.checkered")
+    ]
+
+    /// Closing phrases used to fill the stretched final capsule; the widest one
+    /// that fits is chosen and any leftover width is padded with exclamations.
+    static let closingPhrases = [
+        "Pause here — step away, stretch, and give your eyes a proper break",
+        "Step away, stretch, and give your eyes a proper break",
+        "Take a breath, stretch, and step away for a moment",
+        "Take a proper break now"
     ]
 
     static func content(at index: Int) -> BlockContent {
@@ -547,14 +556,11 @@ private enum TravelingTimeOutGeometry {
         return (glyphs, cursor)
     }
 
-    /// Lays out up to `count` separated phrase blocks. While flowing, the timer
-    /// capsule becomes the first block in the same rounded-rect path. Blocks fill
-    /// clockwise from the top-center; when a loop completes, the trail steps to
-    /// the next inner ring and stops after `maxLoops` loops.
-    static let maxLoops = 1
-
+    /// Builds the complete trail in its final form — every capsule that fits the
+    /// ring, with the closing phrase already baked into the stretched last
+    /// capsule. Callers reveal a growing prefix of this (see `revealedLayout`),
+    /// so capsules never change shape or content as later ones appear.
     static func layout(
-        count: Int,
         in area: CGRect,
         flowOffset: CGFloat = 0,
         position: OverlayPosition,
@@ -564,22 +570,27 @@ private enum TravelingTimeOutGeometry {
     ) -> [BlockLayout] {
         let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
         let timerCapsuleLength = timerCapsuleLength(for: timerText)
-        var ringIndex = 0
-        guard var currentRing = ring(ringIndex, in: area) else { return [] }
-        let timerCenter = timerCenterDistance(on: currentRing, position: position)
-        var base = includesTimer
+        guard let ring = ring(0, in: area) else { return [] }
+        let timerCenter = timerCenterDistance(on: ring, position: position)
+        let base = includesTimer
             ? timerCenter - timerCapsuleLength / 2
             : timerCenter + timerCapsuleLength / 2 + blockGap
-        var trailEnd = base + currentRing.total - blockGap
+        // While flowing, the timer is block 0 and reserves its own slot, so the
+        // trail just needs a trailing gap before it wraps back to the timer.
+        // During the reveal the timer is drawn as a separate static capsule, so
+        // the trail must leave its whole slot (timer width + a gap each side)
+        // empty instead of wrapping over it. Both cases end at the same point —
+        // just left of the timer — so the reveal→flow handoff is seamless.
+        let trailEnd = includesTimer
+            ? base + ring.total - blockGap
+            : base + ring.total - timerCapsuleLength - 2 * blockGap
         var cursor = base
-        var lastBlockEnd = base
         var layouts: [BlockLayout] = []
         var blockStarts: [CGFloat] = []
         var glyphID = 0
-        var reachedEndOfTrail = false
 
-        let layoutCount = max(0, count) + (includesTimer ? 1 : 0)
-        for index in 0..<layoutCount {
+        var index = 0
+        while true {
             let isTimerBlock = includesTimer && index == 0
             let trailIndex = includesTimer ? index - 1 : index
             let blockContent: BlockContent = isTimerBlock
@@ -605,29 +616,15 @@ private enum TravelingTimeOutGeometry {
                 timerCapsuleLength: timerCapsuleLength
             )
 
-            // After a full loop, step inward (up to maxLoops) or stop.
+            // Stop once the next block would overflow the ring.
             if cursor + blockLength > trailEnd {
-                guard ringIndex + 1 < maxLoops, let next = ring(ringIndex + 1, in: area) else {
-                    reachedEndOfTrail = true
-                    break
-                }
-                let dropPoint = currentRing.locate(lastBlockEnd).0
-                ringIndex += 1
-                currentRing = next
-                let seam = min(currentRing.lineH, max(0, dropPoint.x - (currentRing.rect.minX + currentRing.r)))
-                base = seam
-                trailEnd = base + currentRing.total
-                cursor = seam
-                lastBlockEnd = seam
-                if cursor + blockLength > trailEnd {
-                    reachedEndOfTrail = true
-                    break
-                }
+                break
             }
 
+            // Keep the trail ending on a text block so the closing capsule can
+            // absorb the leftover width; never end on a run of trailing symbols.
             if !isTimerBlock,
                isSymbolBlock,
-               ringIndex + 1 >= maxLoops,
                wouldLeaveOnlyTrailingSymbols(
                    startingAt: trailIndex,
                    cursor: cursor,
@@ -635,7 +632,6 @@ private enum TravelingTimeOutGeometry {
                    font: font,
                    timeString: timeString
                ) {
-                reachedEndOfTrail = true
                 break
             }
 
@@ -646,7 +642,7 @@ private enum TravelingTimeOutGeometry {
             let contentStart = cursor + contentInset + flowOffset
             let glyphs = measured.glyphs.map { glyph -> PlacedGlyph in
                 defer { glyphID += 1 }
-                let placement = currentRing.locate(contentStart + glyph.center)
+                let placement = ring.locate(contentStart + glyph.center)
                 return PlacedGlyph(
                     id: glyphID,
                     character: glyph.character,
@@ -658,65 +654,94 @@ private enum TravelingTimeOutGeometry {
                 )
             }
 
-            layouts.append(BlockLayout(id: index, band: bandPath(on: currentRing, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
-            lastBlockEnd = cursor + blockLength
-            cursor = lastBlockEnd + blockGap
+            layouts.append(BlockLayout(id: index, band: bandPath(on: ring, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
+            cursor += blockLength + blockGap
+            index += 1
         }
 
-        // When the final requested block is also the last one that can fit,
-        // close the loop immediately instead of waiting for one more reveal tick.
-        if !reachedEndOfTrail, layouts.count == layoutCount {
-            let nextTrailIndex = count
-            let nextContent = content(at: nextTrailIndex)
-            if isSymbol(nextContent) {
-                reachedEndOfTrail = ringIndex + 1 >= maxLoops
-                    && wouldLeaveOnlyTrailingSymbols(
-                        startingAt: nextTrailIndex,
-                        cursor: cursor,
-                        trailEnd: trailEnd,
-                        font: font,
-                        timeString: timeString
-                    )
-            } else {
-                let nextMeasurement = measure(nextContent, font: font, timeString: timeString)
-                let nextLength = blockLength(
-                    for: nextContent,
-                    measuredWidth: nextMeasurement.width,
-                    isTimerBlock: false,
-                    timerCapsuleLength: timerCapsuleLength
-                )
-                reachedEndOfTrail = cursor + nextLength > trailEnd
-                    && ringIndex + 1 >= maxLoops
-            }
-        }
-
-        // Stretch the last capsule to the first capsule's edge so the completed
-        // trail keeps the standard gap without swapping its generated content.
-        // Never use an icon capsule as the trail's final filler. Remove trailing
-        // icons and let the preceding text capsule absorb the remaining width.
-        while reachedEndOfTrail,
-              layouts.count > 1,
+        // Drop any trailing symbol capsules so the final filler is always text.
+        while layouts.count > 1,
               layouts.last?.glyphs.contains(where: \.isSymbol) == true {
             layouts.removeLast()
             blockStarts.removeLast()
         }
 
-        if reachedEndOfTrail,
-           let lastBlockStart = blockStarts.last,
+        // Stretch the last capsule to the trail's end and fill the gained width
+        // with a closing phrase padded by exclamation marks.
+        if let lastBlockStart = blockStarts.last,
            let last = layouts.last {
             let finalLength = trailEnd - lastBlockStart
+            let availableTextWidth = max(0, finalLength - sidePadding * 2)
+            let closingContent = closingPhrases
+                .map { (phrase: $0, measurement: measureText($0, font: font)) }
+                .first { $0.measurement.width <= availableTextWidth }
+
+            let finalGlyphs: [PlacedGlyph]
+            if let closingContent {
+                let spacerWidth = (" " as NSString).size(withAttributes: [.font: font]).width
+                let exclamationWidth = ("!" as NSString).size(withAttributes: [.font: font]).width
+                let remainingWidth = availableTextWidth - closingContent.measurement.width
+                let exclamationCount = remainingWidth > spacerWidth
+                    ? max(0, Int(floor((remainingWidth - spacerWidth) / exclamationWidth)))
+                    : 0
+                let finalText = exclamationCount > 0
+                    ? "\(closingContent.phrase) \(String(repeating: "!", count: exclamationCount))"
+                    : closingContent.phrase
+                let finalMeasurement = measureText(finalText, font: font)
+                let contentStart = lastBlockStart + sidePadding + flowOffset
+                finalGlyphs = finalMeasurement.glyphs.map { glyph -> PlacedGlyph in
+                    defer { glyphID += 1 }
+                    let placement = ring.locate(contentStart + glyph.center)
+                    return PlacedGlyph(
+                        id: glyphID,
+                        character: glyph.character,
+                        isSymbol: false,
+                        symbolName: nil,
+                        usesMonospacedDigit: false,
+                        position: placement.0,
+                        angle: placement.1
+                    )
+                }
+            } else {
+                finalGlyphs = last.glyphs
+            }
+
             layouts[layouts.count - 1] = BlockLayout(
                 id: last.id,
                 band: bandPath(
-                    on: currentRing,
+                    on: ring,
                     start: lastBlockStart + flowOffset,
                     length: finalLength
                 ),
-                glyphs: last.glyphs
+                glyphs: finalGlyphs
             )
         }
 
         return layouts
+    }
+
+    /// The capsules currently on screen: the full trail while flowing, or a
+    /// growing prefix of it during the initial reveal. Because the prefix is
+    /// taken from the already-final layout, capsules that are visible never
+    /// change as later ones (including the closing capsule) appear.
+    static func revealedLayout(
+        itemCount: Int,
+        isFlowing: Bool,
+        in area: CGRect,
+        flowOffset: CGFloat = 0,
+        position: OverlayPosition,
+        timerText: String,
+        timeString: String
+    ) -> [BlockLayout] {
+        let full = layout(
+            in: area,
+            flowOffset: flowOffset,
+            position: position,
+            includesTimer: isFlowing,
+            timerText: timerText,
+            timeString: timeString
+        )
+        return isFlowing ? full : Array(full.prefix(max(0, itemCount)))
     }
 
     /// Builds the filled capsule shape for one block along the given ring.
@@ -750,12 +775,12 @@ private enum TravelingTimeOutGeometry {
         includesTimer: Bool,
         timerText: String
     ) -> Bool {
-        let layouts = layout(
-            count: itemCount,
+        let layouts = revealedLayout(
+            itemCount: itemCount,
+            isFlowing: includesTimer,
             in: area,
             flowOffset: flowOffset,
             position: position,
-            includesTimer: includesTimer,
             timerText: timerText,
             timeString: currentTimeString()
         )
@@ -853,12 +878,12 @@ struct TravelingTimeOutView: View {
             )
             let isFlowing = flowSeconds > 0
             let flow = TravelingTimeOutGeometry.flowOffset(flowSeconds: flowSeconds)
-            let layouts = TravelingTimeOutGeometry.layout(
-                count: fill.itemCount,
+            let layouts = TravelingTimeOutGeometry.revealedLayout(
+                itemCount: fill.itemCount,
+                isFlowing: isFlowing,
                 in: area,
                 flowOffset: flow,
                 position: .topCenter,
-                includesTimer: isFlowing,
                 timerText: model.formattedRemaining,
                 timeString: timeString
             )
@@ -868,13 +893,13 @@ struct TravelingTimeOutView: View {
             ZStack {
                 ForEach(visible) { layout in
                     layout.band.fill(WarningCapsuleStyle.completionFill)
-                        .opacity(capsuleOpacity(for: layout))
+                        .offset(trembleOffset(for: layout, now: now))
                 }
                 ForEach(visible) { layout in
                     ForEach(layout.glyphs) { item in
                         glyph(item)
                     }
-                    .opacity(capsuleOpacity(for: layout))
+                    .offset(trembleOffset(for: layout, now: now))
                 }
                 closeButton(
                     frame: TravelingTimeOutGeometry.closeButtonFrame(
@@ -883,7 +908,6 @@ struct TravelingTimeOutView: View {
                     )
                 )
             }
-            .animation(.easeOut(duration: 0.12), value: model.isCompletionCapsuleHovered)
             .onAppear { fill.start() }
             .onDisappear { fill.stop() }
             .onChange(of: isFlowing) { flowing in
@@ -891,11 +915,11 @@ struct TravelingTimeOutView: View {
             }
             .onChange(of: model.isClosing) { closing in
                 guard closing else { return }
-                let total = TravelingTimeOutGeometry.layout(
-                    count: fill.itemCount,
+                let total = TravelingTimeOutGeometry.revealedLayout(
+                    itemCount: fill.itemCount,
+                    isFlowing: model.isTimesUpFlowing,
                     in: area,
                     position: .topCenter,
-                    includesTimer: model.isTimesUpFlowing,
                     timerText: model.formattedRemaining,
                     timeString: TravelingTimeOutGeometry.currentTimeString()
                 ).count
@@ -905,8 +929,17 @@ struct TravelingTimeOutView: View {
         .ignoresSafeArea()
     }
 
-    private func capsuleOpacity(for layout: BlockLayout) -> Double {
-        model.isCompletionCapsuleHovered ? 0.5 : 1
+    /// A fast, slightly irregular shiver applied to every capsule while the close
+    /// button is hovered. Each capsule gets its own phase (from its id) so the
+    /// trail trembles incoherently rather than sliding as one block.
+    private func trembleOffset(for layout: BlockLayout, now: CFTimeInterval) -> CGSize {
+        guard model.isCompletionCapsuleHovered else { return .zero }
+        let t = CGFloat(now)
+        let phase = CGFloat(layout.id) * 1.7
+        let amplitude: CGFloat = 1.8
+        let dx = sin(t * 27 + phase) * amplitude
+        let dy = cos(t * 31 + phase * 1.4) * amplitude
+        return CGSize(width: dx, height: dy)
     }
 
     private func closeButton(frame: CGRect) -> some View {
@@ -924,7 +957,6 @@ struct TravelingTimeOutView: View {
         }
         .frame(width: frame.width, height: frame.height)
         .position(x: frame.midX, y: frame.midY)
-        .opacity(model.isCompletionCapsuleHovered ? 1 : 0.92)
         .allowsHitTesting(false)
     }
 

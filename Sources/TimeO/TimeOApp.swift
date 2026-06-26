@@ -1130,17 +1130,12 @@ struct TimerOverlayView: View {
                     appearanceMode: model.appearanceMode,
                     overlayPosition: model.displayedOverlayPosition,
                     isHovered: model.isRunning && model.isOverlayHovered,
-                    isWarning: model.remainingSeconds <= 10,
+                    isWarning: model.remainingSeconds < 60,
                     isPaused: model.isPaused,
                     isCompletion: model.isFinished
                 )
-                .opacity(
-                    model.isFinished && model.isCompletionCapsuleHovered
-                        ? 0.5
-                        : model.overlayProximityOpacity
-                )
+                .opacity(model.overlayProximityOpacity)
                 .animation(.linear(duration: 0.06), value: model.overlayProximityOpacity)
-                .animation(.easeOut(duration: 0.12), value: model.isCompletionCapsuleHovered)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .contextMenu {
                     Button {
