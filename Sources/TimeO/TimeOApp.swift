@@ -122,6 +122,7 @@ final class TimerModel: ObservableObject {
     @Published var appearanceMode: OverlayAppearanceMode = .automatic
     @Published var overlayPosition: OverlayPosition = .topCenter
     @Published var isOverlayHovered = false
+    @Published var isCommandHeld = false
     @Published var overlayProximityOpacity: Double = 1
     @Published var isOverlayContextMenuOpen = false
     @Published var isFinished = false
@@ -932,6 +933,9 @@ final class OverlayController {
             if model.isOverlayHovered {
                 model.isOverlayHovered = false
             }
+            if model.isCommandHeld {
+                model.isCommandHeld = false
+            }
             if model.overlayProximityOpacity != 1 {
                 model.overlayProximityOpacity = 1
             }
@@ -942,7 +946,11 @@ final class OverlayController {
         let mouseLocation = NSEvent.mouseLocation
         let hoveredWindow = windows.first { $0.containsHoverPoint(mouseLocation) }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isModifierHeld = modifiers.contains(.shift) || modifiers.contains(.command)
+        let isCommandHeld = modifiers.contains(.command)
+        if model.isCommandHeld != isCommandHeld {
+            model.isCommandHeld = isCommandHeld
+        }
+        let isModifierHeld = modifiers.contains(.shift) || isCommandHeld
         let isInteractionEnabled = hoveredWindow != nil
             && (isModifierHeld || model.isOverlayContextMenuOpen)
         let proximityOpacity = isModifierHeld || model.isOverlayContextMenuOpen
@@ -1157,7 +1165,7 @@ struct TimerOverlayView: View {
                         appearanceMode: model.appearanceMode,
                         overlayPosition: model.displayedOverlayPosition,
                         isHovered: model.isRunning && model.isOverlayHovered,
-                        isWarning: model.remainingSeconds < 60,
+                        isWarning: model.remainingSeconds < 60 || (model.isRunning && model.isCommandHeld),
                         isPaused: model.isPaused,
                         isCompletion: model.isFinished
                     )
