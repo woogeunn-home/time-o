@@ -310,6 +310,14 @@ private enum TravelingTimeOutGeometry {
     static let repeatInterval: TimeInterval = 0.5
     /// Arc-length the whole trail drifts clockwise per second.
     static let flowSpeed: CGFloat = 90
+    private static let baseLayoutCache = NSCache<NSString, BaseLayoutBox>()
+    private static let currentTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
     static func timerCapsuleLength(for timerText: String) -> CGFloat {
         OverlayWindow.centerOverlayWidth(for: timerText)
     }
@@ -332,9 +340,8 @@ private enum TravelingTimeOutGeometry {
         timerText: String,
         timeString: String
     ) -> Int {
-        layout(
+        baseLayout(
             in: area,
-            flowOffset: 0,
             position: position,
             timerText: timerText,
             timeString: timeString
@@ -399,10 +406,7 @@ private enum TravelingTimeOutGeometry {
     }
 
     static func currentTimeString() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "h:mm a"
-        return formatter.string(from: Date())
+        currentTimeFormatter.string(from: Date())
     }
 
     static func layoutArea(screenFrame: CGRect, visibleFrame: CGRect) -> CGRect {
@@ -556,18 +560,36 @@ private enum TravelingTimeOutGeometry {
         return (glyphs, cursor)
     }
 
-    /// Builds the complete trail in its final form — every capsule that fits the
-    /// ring, with the closing phrase already baked into the stretched last
-    /// capsule. Callers reveal a growing prefix of this (see `revealedLayout`),
-    /// so capsules never change shape or content as later ones appear.
-    static func layout(
+    private static func baseLayoutCacheKey(
+        area: CGRect,
+        position: OverlayPosition,
+        includesTimer: Bool,
+        timerText: String,
+        timeString: String
+    ) -> NSString {
+        "\(area.minX)|\(area.minY)|\(area.width)|\(area.height)|\(position)|\(includesTimer)|\(timerText)|\(timeString)" as NSString
+    }
+
+    /// Builds the complete trail in its final form without applying the animated
+    /// flow offset. This is stable for a given screen, timer text, and minute.
+    static func baseLayout(
         in area: CGRect,
-        flowOffset: CGFloat = 0,
         position: OverlayPosition,
         includesTimer: Bool = false,
         timerText: String,
         timeString: String
-    ) -> [BlockLayout] {
+    ) -> [BaseBlockLayout] {
+        let cacheKey = baseLayoutCacheKey(
+            area: area,
+            position: position,
+            includesTimer: includesTimer,
+            timerText: timerText,
+            timeString: timeString
+        )
+        if let cached = baseLayoutCache.object(forKey: cacheKey) {
+            return cached.layouts
+        }
+
         let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
         let timerCapsuleLength = timerCapsuleLength(for: timerText)
         guard let ring = ring(0, in: area) else { return [] }
@@ -585,7 +607,7 @@ private enum TravelingTimeOutGeometry {
             ? base + ring.total - blockGap
             : base + ring.total - timerCapsuleLength - 2 * blockGap
         var cursor = base
-        var layouts: [BlockLayout] = []
+        var layouts: [BaseBlockLayout] = []
         var blockStarts: [CGFloat] = []
         var glyphID = 0
 
@@ -639,22 +661,20 @@ private enum TravelingTimeOutGeometry {
             let contentInset = (isTimerBlock || isSymbolBlock)
                 ? (blockLength - measured.width) / 2
                 : sidePadding
-            let contentStart = cursor + contentInset + flowOffset
-            let glyphs = measured.glyphs.map { glyph -> PlacedGlyph in
+            let contentStart = cursor + contentInset
+            let glyphs = measured.glyphs.map { glyph -> BasePlacedGlyph in
                 defer { glyphID += 1 }
-                let placement = ring.locate(contentStart + glyph.center)
-                return PlacedGlyph(
+                return BasePlacedGlyph(
                     id: glyphID,
                     character: glyph.character,
                     isSymbol: glyph.isSymbol,
                     symbolName: glyph.symbolName,
                     usesMonospacedDigit: glyph.usesMonospacedDigit,
-                    position: placement.0,
-                    angle: placement.1
+                    center: contentStart + glyph.center
                 )
             }
 
-            layouts.append(BlockLayout(id: index, band: bandPath(on: ring, start: cursor + flowOffset, length: blockLength), glyphs: glyphs))
+            layouts.append(BaseBlockLayout(id: index, start: cursor, length: blockLength, glyphs: glyphs))
             cursor += blockLength + blockGap
             index += 1
         }
@@ -676,7 +696,7 @@ private enum TravelingTimeOutGeometry {
                 .map { (phrase: $0, measurement: measureText($0, font: font)) }
                 .first { $0.measurement.width <= availableTextWidth }
 
-            let finalGlyphs: [PlacedGlyph]
+            let finalGlyphs: [BasePlacedGlyph]
             if let closingContent {
                 let spacerWidth = (" " as NSString).size(withAttributes: [.font: font]).width
                 let exclamationWidth = ("!" as NSString).size(withAttributes: [.font: font]).width
@@ -688,36 +708,55 @@ private enum TravelingTimeOutGeometry {
                     ? "\(closingContent.phrase) \(String(repeating: "!", count: exclamationCount))"
                     : closingContent.phrase
                 let finalMeasurement = measureText(finalText, font: font)
-                let contentStart = lastBlockStart + sidePadding + flowOffset
-                finalGlyphs = finalMeasurement.glyphs.map { glyph -> PlacedGlyph in
+                let contentStart = lastBlockStart + sidePadding
+                finalGlyphs = finalMeasurement.glyphs.map { glyph -> BasePlacedGlyph in
                     defer { glyphID += 1 }
-                    let placement = ring.locate(contentStart + glyph.center)
-                    return PlacedGlyph(
+                    return BasePlacedGlyph(
                         id: glyphID,
                         character: glyph.character,
                         isSymbol: false,
                         symbolName: nil,
                         usesMonospacedDigit: false,
-                        position: placement.0,
-                        angle: placement.1
+                        center: contentStart + glyph.center
                     )
                 }
             } else {
                 finalGlyphs = last.glyphs
             }
 
-            layouts[layouts.count - 1] = BlockLayout(
+            layouts[layouts.count - 1] = BaseBlockLayout(
                 id: last.id,
-                band: bandPath(
-                    on: ring,
-                    start: lastBlockStart + flowOffset,
-                    length: finalLength
-                ),
+                start: lastBlockStart,
+                length: finalLength,
                 glyphs: finalGlyphs
             )
         }
 
+        baseLayoutCache.setObject(BaseLayoutBox(layouts), forKey: cacheKey)
         return layouts
+    }
+
+    /// Builds the complete trail in its final form — every capsule that fits the
+    /// ring, with the closing phrase already baked into the stretched last
+    /// capsule. Callers reveal a growing prefix of this (see `revealedLayout`),
+    /// so capsules never change shape or content as later ones appear.
+    static func layout(
+        in area: CGRect,
+        flowOffset: CGFloat = 0,
+        position: OverlayPosition,
+        includesTimer: Bool = false,
+        timerText: String,
+        timeString: String
+    ) -> [BlockLayout] {
+        guard let ring = ring(0, in: area) else { return [] }
+        return baseLayout(
+            in: area,
+            position: position,
+            includesTimer: includesTimer,
+            timerText: timerText,
+            timeString: timeString
+        )
+        .map { $0.layout(on: ring, flowOffset: flowOffset) }
     }
 
     /// The capsules currently on screen: the full trail while flowing, or a
@@ -733,15 +772,16 @@ private enum TravelingTimeOutGeometry {
         timerText: String,
         timeString: String
     ) -> [BlockLayout] {
-        let full = layout(
+        guard let ring = ring(0, in: area) else { return [] }
+        let full = baseLayout(
             in: area,
-            flowOffset: flowOffset,
             position: position,
             includesTimer: isFlowing,
             timerText: timerText,
             timeString: timeString
         )
-        return isFlowing ? full : Array(full.prefix(max(0, itemCount)))
+        let visible = isFlowing ? full : Array(full.prefix(max(0, itemCount)))
+        return visible.map { $0.layout(on: ring, flowOffset: flowOffset) }
     }
 
     /// Builds the filled capsule shape for one block along the given ring.
@@ -1004,6 +1044,51 @@ private struct BlockLayout: Identifiable {
     let id: Int
     let band: Path
     let glyphs: [PlacedGlyph]
+}
+
+private struct BasePlacedGlyph {
+    let id: Int
+    let character: Character
+    let isSymbol: Bool
+    let symbolName: String?
+    let usesMonospacedDigit: Bool
+    let center: CGFloat
+
+    func placed(on ring: RoundedRectPath, flowOffset: CGFloat) -> PlacedGlyph {
+        let placement = ring.locate(center + flowOffset)
+        return PlacedGlyph(
+            id: id,
+            character: character,
+            isSymbol: isSymbol,
+            symbolName: symbolName,
+            usesMonospacedDigit: usesMonospacedDigit,
+            position: placement.0,
+            angle: placement.1
+        )
+    }
+}
+
+private struct BaseBlockLayout {
+    let id: Int
+    let start: CGFloat
+    let length: CGFloat
+    let glyphs: [BasePlacedGlyph]
+
+    func layout(on ring: RoundedRectPath, flowOffset: CGFloat) -> BlockLayout {
+        BlockLayout(
+            id: id,
+            band: TravelingTimeOutGeometry.bandPath(on: ring, start: start + flowOffset, length: length),
+            glyphs: glyphs.map { $0.placed(on: ring, flowOffset: flowOffset) }
+        )
+    }
+}
+
+private final class BaseLayoutBox {
+    let layouts: [BaseBlockLayout]
+
+    init(_ layouts: [BaseBlockLayout]) {
+        self.layouts = layouts
+    }
 }
 
 /// Arc-length parameterization of a rounded rectangle, walked clockwise starting
